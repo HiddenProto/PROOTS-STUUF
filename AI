@@ -1,0 +1,731 @@
+--!strict
+--[[
+	Roblox AI Chatbot Script (v1.2.2 - Reply Fetch)
+	
+--]]
+
+-- Services
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local TextChatService = game:GetService("TextChatService")
+local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
+local Workspace = game:GetService("Workspace")
+
+-- Player Variables
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- Configuration
+local apiKey = "AIzaSyA5hNW02upHKTn4paquDGZzv2HYLALyrGc" 
+local model = "gemini-2.5-flash-preview-05-20"
+local config = {
+	enabled = true,
+	waitForCall = true,
+	jsonFilter = true, -- NEW: Toggle for JSON filtering
+	chatDistance = 0,
+	specificUsers = {},
+	persona = "a helpful assistant",
+	instructions = "Respond concisely and helpfully.",
+	responseLanguage = "English",
+	chatHandle = "[AI]",
+	cooldown = 3,
+	maxHistory = 10,
+}
+
+-- State Variables
+local contents = {}
+local lastResponseTime = 0
+local botStatus = "Unavailable"
+local notedErrors = ""
+local lastSenderId = nil
+local isResponding = false
+local outputLog = {}
+
+-- Helper function for trimming strings
+local function trim(str)
+	return str:match("^%s*(.-)%s*$")
+end
+
+-- Helper function to update the Outputs log
+local function logToOutput(message, isError)
+	table.insert(outputLog, {message = message, isError = isError})
+	if #outputLog > 50 then
+		table.remove(outputLog, 1)
+	end
+end
+
+-- Generates the system instruction text.
+local function getSystemInstruction()
+	local permanentInstructions = "You are a helpful AI chatbot named '" .. LocalPlayer.DisplayName .. "' and your chat handle is '" .. config.chatHandle .. "'. " ..
+		"You exist within a Roblox game environment as a non-player character. " ..
+		"Your primary function is to interact with players by responding to their messages. " ..
+		"You can NOT perform any actions. " ..
+		"You MUST respond with a JSON object in this format: `{\"message\": \"your text here\"}`. "
+		
+	if config.jsonFilter then
+		permanentInstructions = permanentInstructions .. "The `message` field MUST be under 200 characters. "
+	else
+		-- New instruction for when the full JSON is sent
+		permanentInstructions = permanentInstructions .. "The entire JSON object text MUST be under 200 characters. "
+	end
+
+	permanentInstructions = permanentInstructions .. "Your entire response MUST be a single line of text and a valid JSON object."
+
+	return {
+		role = "user",
+		parts = {{
+			text = "You are " .. config.persona .. ". " .. config.instructions .. " Respond in " .. config.responseLanguage .. ".\n" ..
+				"When information about a player is provided, use it to answer questions about them. The information will be formatted as 'PLAYER INFO: {JSON_object}'.\n" ..
+				permanentInstructions
+		}}
+	}
+end
+
+-- Resets the conversation history.
+local function resetConversation()
+	logToOutput("Conversation history has been cleared.", false)
+	contents = {}
+	table.insert(contents, getSystemInstruction())
+	table.insert(contents, {
+		role = "model",
+		parts = {{text = HttpService:JSONEncode({message = "I am ready."})}}
+	})
+	botStatus = "Ready"
+	notedErrors = ""
+	lastSenderId = nil
+end
+
+-- Get AI response.
+local function getAIResponse(prompt, senderDisplayName, senderUsername, playerInfoTable, silent)
+	if isResponding then
+		if not silent then warn("AI Chatbot: Already responding, skipping new request.") end
+		logToOutput("Already responding, skipping new request.", true)
+		return nil
+	end
+
+	isResponding = true
+	botStatus = "Responding..."
+	if not silent then logToOutput("AI Ask: " .. prompt, false) end
+
+	if tick() - lastResponseTime < config.cooldown then
+		botStatus = "On Cooldown"
+		isResponding = false
+		if not silent then warn("AI Chatbot: On cooldown, skipping.") end
+		logToOutput("On cooldown, skipping.", true)
+		return nil
+	end
+	
+	local formattedPrompt = ""
+	if playerInfoTable then
+		formattedPrompt = "PLAYER INFO: " .. HttpService:JSONEncode(playerInfoTable) .. "\n"
+	end
+	formattedPrompt = formattedPrompt .. "[Message from User: '" .. senderDisplayName .. "' (" .. senderUsername .. ")] " .. prompt
+
+	table.insert(contents, {role = "user", parts = {{text = formattedPrompt}}})
+
+	-- Prepare the request body
+	local requestBody = {
+		contents = contents,
+	}
+	
+	local url = "https://generativelanguage.googleapis.com/v1beta/models/" .. model .. ":generateContent?key=" .. apiKey
+	local encodedBody = HttpService:JSONEncode(requestBody)
+
+	logToOutput("Message Sent...", false)
+	local success, response = pcall(function()
+		return HttpService:RequestAsync({Url = url, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = encodedBody})
+	end)
+
+	if not success or not response.Success then
+		if not silent then warn("AI Chatbot: Failed./.Failed to make API call.") end
+		botStatus = "Unavailable"
+		notedErrors = "Failed./.Contact %/%"
+		isResponding = false
+		table.remove(contents)
+		logToOutput("Failed./.Contact %/%", true)
+		return nil
+	end
+
+	logToOutput("Message received...", false)
+	local data = HttpService:JSONDecode(response.Body)
+
+	if not data or not data.candidates or not data.candidates[1] then
+		if not silent then warn("AI Chatbot: Failed./.May be usable but not well.") end
+		botStatus = "Error"
+		notedErrors = "Failed./.May be usable but not well."
+		isResponding = false
+		table.remove(contents)
+		logToOutput("Failed./.May be usable but not well.", true)
+		return nil
+	end
+
+	local generatedText = data.candidates[1].content.parts[1].text
+	if not silent then logToOutput("Received from AI: " .. generatedText, false) end
+
+	table.insert(contents, {role = "model", parts = {{text = generatedText}}})
+
+	if #contents > config.maxHistory * 2 + 2 then
+		table.remove(contents, 3)
+		table.remove(contents, 3)
+	end
+	
+	lastResponseTime = tick()
+	botStatus = "Ready"
+	notedErrors = ""
+	isResponding = false
+
+	-- NEW LOGIC: Check the JSON Filter toggle
+	if config.jsonFilter then
+		local aiJsonSuccess, aiJson = pcall(function()
+			return HttpService:JSONDecode(generatedText)
+		end)
+		if not aiJsonSuccess then
+			warn("AI Chatbot: Failed./.Failed to parse JSON. Response was not valid JSON.")
+			notedErrors = "Failed./.Failed to parse JSON."
+			logToOutput("Failed./.Failed to parse JSON.", true)
+			return nil
+		end
+		return aiJson.message or ""
+	else
+		return generatedText -- Send the raw JSON string directly
+	end
+end
+
+-- Handle incoming chat messages
+local function handleMessage(senderPlayer, message)
+	local chatChannel = TextChatService:WaitForChild("TextChannels"):WaitForChild("RBXGeneral")
+	
+	if not config.enabled then return end
+
+	if #config.specificUsers > 0 and not table.find(config.specificUsers, senderPlayer.Name) then
+		return
+	end
+
+	local localChar = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+	local senderChar = senderPlayer.Character or senderPlayer.CharacterAdded:Wait()
+	if localChar and senderChar and config.chatDistance > 0 then
+		local distance = (localChar:WaitForChild("HumanoidRootPart").Position - senderChar:WaitForChild("HumanoidRootPart").Position).Magnitude
+		if distance > config.chatDistance then
+			return
+		end
+	end
+
+	local shouldRespond = false
+	local lowerCaseMessage = message:lower()
+	local botDisplayName = LocalPlayer.DisplayName:lower()
+	local botChatHandle = config.chatHandle:lower():gsub("%[", ""):gsub("%]", "")
+
+	if not config.waitForCall then
+		shouldRespond = true
+	else
+		local messageWords = {}
+		for word in lowerCaseMessage:gmatch("[^%s]+") do
+			table.insert(messageWords, word)
+		end
+		for _, word in ipairs(messageWords) do
+			if word == botDisplayName or string.match(botChatHandle, "^" .. word) then
+				shouldRespond = true
+				break
+			end
+		end
+	end
+
+	if not shouldRespond then return end
+
+	lastSenderId = senderPlayer.UserId
+
+	if string.len(message) == 0 then return end
+
+	-- Player Info Fetching Logic (Simplified)
+	local playerInfoTable = {
+		DisplayName = senderPlayer.DisplayName,
+		Username = senderPlayer.Name
+	}
+
+	spawn(function()
+		local response = getAIResponse(message, senderPlayer.DisplayName, senderPlayer.Name, playerInfoTable, false)
+		
+		if response and response ~= "" then
+			chatChannel:SendAsync(config.chatHandle .. " " .. response)
+		end
+	end)
+end
+
+local function setupChatDetection()
+	TextChatService.OnIncomingMessage = function(message)
+		local props = Instance.new("TextChatMessageProperties")
+		
+		if message.TextSource and message.TextSource.UserId == LocalPlayer.UserId then
+			local lowerCaseMessage = message.Text:lower()
+			if string.sub(lowerCaseMessage, 1, #config.chatHandle:lower()) == config.chatHandle:lower() then
+				return props
+			end
+		end
+
+		if message.TextSource then
+			local sender = Players:GetPlayerByUserId(message.TextSource.UserId)
+			if sender then
+				handleMessage(sender, message.Text)
+			end
+		end
+
+		return props
+	end
+	logToOutput("TextChatService message handler enabled.", false)
+end
+
+-- Main Script Logic
+local function initialize()
+	logToOutput("Initializing AI Chatbot...", false)
+	logToOutput("Configuring features...", false)
+	logToOutput("Setting up hardcoded instructions...", false)
+	
+	setupChatDetection()
+	
+	if config.enabled then
+		resetConversation()
+	else
+		botStatus = "Disabled"
+	end
+
+	-- GUI Setup
+	local ScreenGui = Instance.new("ScreenGui")
+	ScreenGui.Name = "AI_GUI"
+	ScreenGui.Parent = PlayerGui
+
+	local OpenButton = Instance.new("TextButton")
+	OpenButton.Name = "OpenButton"
+	OpenButton.Size = UDim2.new(0, 50, 0, 50)
+	OpenButton.Position = UDim2.new(1, -60, 0, 10)
+	OpenButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	OpenButton.Text = "AI"
+	OpenButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	OpenButton.Font = Enum.Font.SourceSansBold
+	OpenButton.TextSize = 16
+	OpenButton.Parent = ScreenGui
+	OpenButton.ZIndex = 2
+	
+	local OpenButtonCorner = Instance.new("UICorner")
+	OpenButtonCorner.CornerRadius = UDim.new(0, 8)
+	OpenButtonCorner.Parent = OpenButton
+
+	local MainFrame = Instance.new("Frame")
+	MainFrame.Name = "MainFrame"
+	MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+	MainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+	MainFrame.Size = UDim2.new(0, 500, 0, 450)
+	MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	MainFrame.BorderSizePixel = 0
+	MainFrame.Parent = ScreenGui
+	MainFrame.Visible = false
+	MainFrame.ZIndex = 1
+
+	local MainFrameCorner = Instance.new("UICorner")
+	MainFrameCorner.CornerRadius = UDim.new(0, 8)
+	MainFrameCorner.Parent = MainFrame
+
+	OpenButton.MouseButton1Click:Connect(function()
+		MainFrame.Visible = not MainFrame.Visible
+	end)
+
+	local TitleBar = Instance.new("Frame")
+	TitleBar.Name = "TitleBar"
+	TitleBar.Size = UDim2.new(1, 0, 0, 30)
+	TitleBar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	TitleBar.Parent = MainFrame
+
+	local Title = Instance.new("TextLabel")
+	Title.Size = UDim2.new(1, -60, 1, 0)
+	Title.Position = UDim2.new(0, 30, 0, 0)
+	Title.Text = "AI Chatbot"
+	Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+	Title.Font = Enum.Font.SourceSansBold
+	Title.TextSize = 18
+	Title.BackgroundTransparency = 1
+	Title.Parent = TitleBar
+
+	local DragButton = Instance.new("TextButton")
+	DragButton.Size = UDim2.new(1, 0, 1, 0)
+	DragButton.Text = ""
+	DragButton.BackgroundTransparency = 1
+	DragButton.Parent = TitleBar
+	
+	local Dragging = false
+	local DragStart = nil
+	local MainFramePosition = MainFrame.Position
+
+	DragButton.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			Dragging = true
+			DragStart = input.Position
+			MainFramePosition = MainFrame.Position
+		end
+	end)
+
+	DragButton.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			Dragging = false
+		end
+	end)
+	
+	RunService.RenderStepped:Connect(function(dt)
+		if Dragging and DragStart then
+			local mouse = PlayerGui:GetMouse()
+			if mouse then
+				local delta = mouse.X - DragStart.X, mouse.Y - DragStart.Y
+				MainFrame.Position = UDim2.new(MainFramePosition.X.Scale, MainFramePosition.X.Offset + delta.X, MainFramePosition.Y.Scale, MainFramePosition.Y.Offset + delta.Y)
+			end
+		end
+	end)
+	
+	local CloseButton = Instance.new("TextButton")
+	CloseButton.Name = "CloseButton"
+	CloseButton.Size = UDim2.new(0, 20, 0, 20)
+	CloseButton.Position = UDim2.new(1, -25, 0, 5)
+	CloseButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+	CloseButton.Text = "X"
+	CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	CloseButton.Font = Enum.Font.SourceSansBold
+	CloseButton.TextSize = 16
+	CloseButton.Parent = TitleBar
+
+	CloseButton.MouseButton1Click:Connect(function()
+		MainFrame.Visible = false
+	end)
+	
+	local TabFrame = Instance.new("Frame")
+	TabFrame.Name = "TabFrame"
+	TabFrame.Size = UDim2.new(1, 0, 0, 30)
+	TabFrame.Position = UDim2.new(0, 0, 0, 30)
+	TabFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	TabFrame.Parent = MainFrame
+	
+	local TabLayout = Instance.new("UIListLayout")
+	TabLayout.FillDirection = Enum.FillDirection.Horizontal
+	TabLayout.Padding = UDim.new(0, 2)
+	TabLayout.Parent = TabFrame
+	
+	local tabs = {}
+	local tabNames = {"AI", "Settings", "Outputs"}
+	
+	local ContentFrame = Instance.new("Frame")
+	ContentFrame.Name = "ContentFrame"
+	ContentFrame.Size = UDim2.new(1, 0, 1, -60)
+	ContentFrame.Position = UDim2.new(0, 0, 0, 60)
+	ContentFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	ContentFrame.Parent = MainFrame
+	
+	for i, name in ipairs(tabNames) do
+		local TabButton = Instance.new("TextButton")
+		TabButton.Name = name .. "TabButton"
+		TabButton.Size = UDim2.new(1/#tabNames, -1, 1, 0)
+		TabButton.Text = name
+		TabButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+		TabButton.Font = Enum.Font.SourceSansBold
+		TabButton.TextSize = 16
+		TabButton.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+		TabButton.Parent = TabFrame
+		
+		local TabContent = Instance.new("Frame")
+		TabContent.Name = name .. "Content"
+		TabContent.Size = UDim2.new(1, 0, 1, 0)
+		TabContent.BackgroundTransparency = 1
+		TabContent.Visible = (i == 1)
+		TabContent.Parent = ContentFrame
+
+		local ScrollFrame = Instance.new("ScrollingFrame")
+		ScrollFrame.Size = UDim2.new(1, 0, 1, 0)
+		ScrollFrame.BackgroundTransparency = 1
+		ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+		ScrollFrame.ScrollBarImageColor3 = Color3.fromRGB(100, 100, 100)
+		ScrollFrame.Parent = TabContent
+
+		local Layout = Instance.new("UIListLayout")
+		Layout.Padding = UDim.new(0, 5)
+		Layout.SortOrder = Enum.SortOrder.LayoutOrder
+		Layout.Parent = ScrollFrame
+		
+		local Padding = Instance.new("UIPadding")
+		Padding.PaddingLeft = UDim.new(0, 5)
+		Padding.PaddingRight = UDim.new(0, 5)
+		Padding.PaddingTop = UDim.new(0, 5)
+		Padding.PaddingBottom = UDim.new(0, 5)
+		Padding.Parent = ScrollFrame
+
+		tabs[name] = {Button = TabButton, Content = TabContent, Scroll = ScrollFrame}
+		
+		TabButton.MouseButton1Click:Connect(function()
+			for _, tab in pairs(tabs) do
+				tab.Content.Visible = false
+				tab.Button.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+			end
+			TabContent.Visible = true
+			TabButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+		end)
+	end
+	
+	-- AI Tab Content
+	local AITabScroll = tabs["AI"].Scroll
+	
+	local BotStatusLabel = Instance.new("TextLabel")
+	BotStatusLabel.Name = "BotStatus"
+	BotStatusLabel.Size = UDim2.new(1, 0, 0, 30)
+	BotStatusLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+	BotStatusLabel.Text = "Bot Status: Initializing..."
+	BotStatusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	BotStatusLabel.Font = Enum.Font.SourceSans
+	BotStatusLabel.TextSize = 14
+	BotStatusLabel.Parent = AITabScroll
+
+	local ChatSendingLabel = Instance.new("TextLabel")
+	ChatSendingLabel.Name = "ChatSendingAvailable"
+	ChatSendingLabel.Size = UDim2.new(1, 0, 0, 30)
+	ChatSendingLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+	ChatSendingLabel.Text = "Chat Sending Available? Yes"
+	ChatSendingLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	ChatSendingLabel.Font = Enum.Font.SourceSans
+	ChatSendingLabel.TextSize = 14
+	ChatSendingLabel.Parent = AITabScroll
+	
+	local NotedErrorsLabel = Instance.new("TextLabel")
+	NotedErrorsLabel.Name = "NotedErrors"
+	NotedErrorsLabel.Size = UDim2.new(1, 0, 0, 50)
+	NotedErrorsLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+	NotedErrorsLabel.Text = "Noted Errors: None"
+	NotedErrorsLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	NotedErrorsLabel.Font = Enum.Font.SourceSans
+	NotedErrorsLabel.TextSize = 14
+	NotedErrorsLabel.TextWrapped = true
+	NotedErrorsLabel.Parent = AITabScroll
+	
+	-- Settings Tab Content
+	local SettingsTabScroll = tabs["Settings"].Scroll
+
+	local EnabledToggle = Instance.new("TextLabel")
+	EnabledToggle.Name = "ToggleEnabled"
+	EnabledToggle.Size = UDim2.new(1, 0, 0, 30)
+	EnabledToggle.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+	EnabledToggle.Text = "Enabled: " .. (config.enabled and "On" or "Off")
+	EnabledToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+	EnabledToggle.Font = Enum.Font.SourceSans
+	EnabledToggle.TextSize = 14
+	EnabledToggle.Parent = SettingsTabScroll
+	EnabledToggle.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			config.enabled = not config.enabled
+			EnabledToggle.Text = "Enabled: " .. (config.enabled and "On" or "Off")
+			if config.enabled then
+				resetConversation()
+			else
+				botStatus = "Disabled"
+			end
+		end
+	end)
+
+	local JSONFilterToggle = Instance.new("TextLabel")
+	JSONFilterToggle.Name = "ToggleJSONFilter"
+	JSONFilterToggle.Size = UDim2.new(1, 0, 0, 30)
+	JSONFilterToggle.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+	JSONFilterToggle.Text = "JSON Filter: " .. (config.jsonFilter and "On" or "Off")
+	JSONFilterToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+	JSONFilterToggle.Font = Enum.Font.SourceSans
+	JSONFilterToggle.TextSize = 14
+	JSONFilterToggle.Parent = SettingsTabScroll
+	JSONFilterToggle.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			config.jsonFilter = not config.jsonFilter
+			JSONFilterToggle.Text = "JSON Filter: " .. (config.jsonFilter and "On" or "Off")
+			-- When the filter changes, we need to reset the conversation history
+			-- so the AI's instructions are updated.
+			resetConversation()
+		end
+	end)
+
+	local WaitOnCallToggle = Instance.new("TextLabel")
+	WaitOnCallToggle.Name = "ToggleWaitOnCall"
+	WaitOnCallToggle.Size = UDim2.new(1, 0, 0, 30)
+	WaitOnCallToggle.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+	WaitOnCallToggle.Text = "Wait On Call: " .. (config.waitForCall and "On" or "Off")
+	WaitOnCallToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+	WaitOnCallToggle.Font = Enum.Font.SourceSans
+	WaitOnCallToggle.TextSize = 14
+	WaitOnCallToggle.Parent = SettingsTabScroll
+	WaitOnCallToggle.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			config.waitForCall = not config.waitForCall
+			WaitOnCallToggle.Text = "Wait On Call: " .. (config.waitForCall and "On" or "Off")
+		end
+	end)
+	
+	local RemoveMemoryButton = Instance.new("TextButton")
+	RemoveMemoryButton.Name = "RemoveMemory"
+	RemoveMemoryButton.Size = UDim2.new(1, 0, 0, 30)
+	RemoveMemoryButton.BackgroundColor3 = Color3.fromRGB(200, 70, 70)
+	RemoveMemoryButton.Text = "Remove Memory"
+	RemoveMemoryButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	RemoveMemoryButton.Font = Enum.Font.SourceSansBold
+	RemoveMemoryButton.TextSize = 14
+	RemoveMemoryButton.Parent = SettingsTabScroll
+	RemoveMemoryButton.MouseButton1Click:Connect(function()
+		resetConversation()
+	end)
+
+	local PersonaInput = Instance.new("TextBox")
+	PersonaInput.Name = "PersonaInput"
+	PersonaInput.Size = UDim2.new(1, 0, 0, 30)
+	PersonaInput.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+	PersonaInput.Text = config.persona
+	PersonaInput.PlaceholderText = "Persona (e.g., a pirate)"
+	PersonaInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+	PersonaInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+	PersonaInput.Font = Enum.Font.SourceSans
+	PersonaInput.TextSize = 14
+	PersonaInput.Parent = SettingsTabScroll
+	PersonaInput.FocusLost:Connect(function()
+		config.persona = PersonaInput.Text
+		resetConversation()
+	end)
+
+	local InstructionsInput = Instance.new("TextBox")
+	InstructionsInput.Name = "InstructionsInput"
+	InstructionsInput.Size = UDim2.new(1, 0, 0, 30)
+	InstructionsInput.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+	InstructionsInput.Text = config.instructions
+	InstructionsInput.PlaceholderText = "Instructions"
+	InstructionsInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+	InstructionsInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+	InstructionsInput.Font = Enum.Font.SourceSans
+	InstructionsInput.TextSize = 14
+	InstructionsInput.Parent = SettingsTabScroll
+	InstructionsInput.FocusLost:Connect(function()
+		config.instructions = InstructionsInput.Text
+		resetConversation()
+	end)
+
+	local ChatHandleInput = Instance.new("TextBox")
+	ChatHandleInput.Name = "ChatHandleInput"
+	ChatHandleInput.Size = UDim2.new(1, 0, 0, 30)
+	ChatHandleInput.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+	ChatHandleInput.Text = config.chatHandle
+	ChatHandleInput.PlaceholderText = "Chat Handle"
+	ChatHandleInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+	ChatHandleInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+	ChatHandleInput.Font = Enum.Font.SourceSans
+	ChatHandleInput.TextSize = 14
+	ChatHandleInput.Parent = SettingsTabScroll
+	ChatHandleInput.FocusLost:Connect(function()
+		config.chatHandle = ChatHandleInput.Text
+	end)
+	
+	local ChatDistanceInput = Instance.new("TextBox")
+	ChatDistanceInput.Name = "ChatDistanceInput"
+	ChatDistanceInput.Size = UDim2.new(1, 0, 0, 30)
+	ChatDistanceInput.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+	ChatDistanceInput.Text = tostring(config.chatDistance)
+	ChatDistanceInput.PlaceholderText = "Chat Distance (0 for infinite)"
+	ChatDistanceInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+	ChatDistanceInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+	ChatDistanceInput.Font = Enum.Font.SourceSans
+	ChatDistanceInput.TextSize = 14
+	ChatDistanceInput.Parent = SettingsTabScroll
+	ChatDistanceInput.FocusLost:Connect(function()
+		local num = tonumber(ChatDistanceInput.Text)
+		if num then
+			config.chatDistance = num
+		else
+			ChatDistanceInput.Text = tostring(config.chatDistance)
+		end
+	end)
+	
+	local SpecificUsersInput = Instance.new("TextBox")
+	SpecificUsersInput.Name = "SpecificUsersInput"
+	SpecificUsersInput.Size = UDim2.new(1, 0, 0, 30)
+	SpecificUsersInput.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+	SpecificUsersInput.Text = table.concat(config.specificUsers, ", ")
+	SpecificUsersInput.PlaceholderText = "Listen to Specific Players (e.g., 'Player1,Player2')"
+	SpecificUsersInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+	SpecificUsersInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+	SpecificUsersInput.Font = Enum.Font.SourceSans
+	SpecificUsersInput.TextSize = 14
+	SpecificUsersInput.Parent = SettingsTabScroll
+	SpecificUsersInput.FocusLost:Connect(function()
+		config.specificUsers = {}
+		for username in string.gmatch(SpecificUsersInput.Text, "[^,]+") do
+			table.insert(config.specificUsers, trim(username))
+		end
+	end)
+	
+	-- Outputs Tab Content
+	local OutputsTab = tabs["Outputs"]
+	local OutputsTabScroll = OutputsTab.Scroll
+	
+	local function updateOutputLog()
+		-- Clear existing messages
+		for _, child in pairs(OutputsTabScroll:GetChildren()) do
+			if child:IsA("TextLabel") then
+				child:Destroy()
+			end
+		end
+
+		-- Re-add messages
+		for _, item in ipairs(outputLog) do
+			local label = Instance.new("TextLabel")
+			label.Size = UDim2.new(1, -10, 0, 20)
+			label.BackgroundTransparency = 1
+			label.TextXAlignment = Enum.TextXAlignment.Left
+			label.TextWrapped = true
+			label.AutomaticSize = Enum.AutomaticSize.Y
+			label.Text = "> " .. item.message
+			label.TextColor3 = item.isError and Color3.fromRGB(255, 100, 100) or Color3.fromRGB(200, 200, 200)
+			label.Font = Enum.Font.SourceSans
+			label.TextSize = 12
+			label.Parent = OutputsTabScroll
+		end
+		-- Scroll to the bottom
+		OutputsTabScroll.CanvasPosition = Vector2.new(0, OutputsTabScroll.CanvasSize.Y.Offset)
+	end
+	
+	local outputMessageChanged = Instance.new("BindableEvent")
+	outputMessageChanged.Event:Connect(function()
+		if tabs["Outputs"].Content.Visible then
+			updateOutputLog()
+		end
+	end)
+	
+	local oldLogToOutput = logToOutput
+	logToOutput = function(message, isError)
+		oldLogToOutput(message, isError)
+		outputMessageChanged:Fire()
+	end
+	
+	-- Function to update AI tab status labels
+	local function updateStatusLabels()
+		BotStatusLabel.Text = "Bot Status: " .. botStatus
+		ChatSendingLabel.Text = "Chat Sending Available? " .. (tick() - lastResponseTime >= config.cooldown and "Yes" or "No")
+		NotedErrorsLabel.Text = "Noted Errors: " .. (notedErrors ~= "" and notedErrors or "None")
+		
+		-- Recalculate canvas size based on the content of the scrolling frames
+		for _, tab in pairs(tabs) do
+			local layout = tab.Scroll:FindFirstChildOfClass("UIListLayout")
+			if layout and tab.Scroll.Visible then
+				local contentSize = layout.AbsoluteContentSize
+				tab.Scroll.CanvasSize = UDim2.new(0, 0, 0, contentSize.Y + layout.Padding.Offset)
+			end
+		end
+	end
+
+	-- Connect update function to a loop
+	RunService.Heartbeat:Connect(updateStatusLabels)
+	
+	-- Initial state setup
+	tabs["AI"].Button.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+	if config.enabled then
+		resetConversation()
+	end
+	
+	logToOutput("Initialization complete.", false)
+end
+
+-- Initialize the script
+initialize()
