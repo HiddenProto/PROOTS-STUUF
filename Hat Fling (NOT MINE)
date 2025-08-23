@@ -1,0 +1,1086 @@
+--[[ Created by GrokAI
+Full Credits of the Hat Collision to ShownApe:
+
+https://www.roblox.com/users/3093134133/profile
+
+~~~   ~~~   ~~~   ~~~   ~~~   ~~~   ~~~   ~~~   ~~~
+
+Last Update: Sat, Jul 12 2025 - 
+It uses AlignPosition instead BodyPosition and that basically means the part now moves instantly to wherever you want.
+
+Important Notes:
+This script may not work on the first execution. Re-execute if it fails, usually takes 1-3 attempts but try till the 15 attempt (!!!: This HIGHLY depend on your internet connection), as the hat drop functionality is not fully stable and its not made by me.
+Credits to Shownape for the HatDrop system.
+Configuration settings are available below in the script.Some keyboards (e.g., Gboard) may not copy the full script; Use the loadstring version instead.
+Compatibility with certain games is limited, as further optimization is needed but I'm not sure how.
+
+Usage Information:
+Designed for games without player collision but works completely fine in games with player collision.
+Requires hats welded to the player's head.
+Tested and functional in games like LGBTQ Hangout (no player collision) or Natural Disaster Survival.
+Only compatible with games that support PermaDeath.
+Optimized for R15 TALL avatars and larger welded hats for best results. 
+
+]]
+
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
+
+if not replicatesignal or (not sethiddenproperty and not setscriptable) then
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "Compatibility Error";
+        Text = "Your exploit doesn't support this script";
+        Duration = 10;
+    })
+    return
+end
+
+local P4K7N = game:GetService("Players")
+local T8R2M = game:GetService("UserInputService")
+local J9L5Q = game:GetService("RunService")
+local F6N3X = P4K7N.LocalPlayer
+local Y2J8V = workspace.CurrentCamera
+
+--Settings
+local B7C4T = {
+    K5P9M = 35, -- Move speed for hat control
+    Q3F8W = 9e9, -- Fling power for velocity-based fling
+    L6T2R = Vector3.new(2, 2, 2), -- Size of the control part
+    G8N4P = 0.9, -- Transparency of the control part
+    H1D7J = 1, -- Distance for control part positioning
+    W9V3F = Vector3.new(math.huge, math.huge, math.huge), -- Max force for body velocity
+    Z4M6C = Enum.CameraType.Custom, -- Camera type for hat control
+    X5R9S = true, -- Enable camera following control part
+    V2A7K = 180436148, -- Animation ID for R6 rig
+    N3Q8T = 507767968, -- Animation ID for R15 rig
+    M4J1B = 1, -- Animation playback speed
+    R6P2Y = Enum.AnimationPriority.Action, -- Animation priority
+    S7W9G = 1, -- Animation weight
+    E8T3L = 0.1, -- Animation time position
+    C9H5F = math.rad(20), -- Drop angle for R15 rig
+    D2Y6V = 25, -- Vertical velocity during drop
+    A1P4Z = -0.25, -- Height offset for fallen parts
+    U3K8N = 2, -- Hat state during drop
+    I7Q5T = 4, -- Hat state after drop
+    O6V2M = 50, -- Velocity for hat reanimation
+    F4L9J = 10, -- Number of reanimation attempts
+    T5S3B = UDim2.new(0, 105, 0, 190), -- GUI frame size
+    K8G2P = UDim2.new(0, 10, 0, 25), -- GUI frame position
+    N1C7R = Color3.fromRGB(50, 50, 50), -- GUI background color
+    Y6B8D = UDim2.new(0, 85, 0, 25), -- Button size
+    P3T4M = Color3.fromRGB(100, 100, 100), -- Button background color
+    J2W9X = Color3.fromRGB(255, 255, 255), -- Button text color
+    L4F6Q = Color3.fromRGB(135, 206, 250), -- Minimize button color
+    R7N5Y = {5, 35, 65, 95, 125, 155}, -- Y offsets for GUI buttons
+    X8Q3Z = false, -- AutoFling toggle state
+    M9H2K = false, -- Manual Fling toggle state
+    APMF7 = 9e9, -- Align Position Max Force
+    APMV2 = math.huge, -- Align Position Max Velocity 
+    APRS9 = 200, -- Align Position Responsiveness 
+    A6R8J = 60000, -- BodyGyro strength
+    C2Y3L = 1000, -- BodyGyro damping
+    B4W9T = game.Players.RespawnTime + 0.1, -- Respawn wait time
+    S3J6F = 1, -- Initial wait time before respawn
+    Q7M2V = 10, -- Timeout for humanoid root part
+    E9K5H = 0.25, -- Wait time during hat drop
+    Z1P8N = 9e9, -- Spin speed for AutoFling
+    W6T3R = 250, -- Velocity threshold for flung players
+    U4A7D = 2.5, -- Duration of AutoFling attack
+    I5N2G = 0.375, -- Offset magnitude for AutoFling
+    O3V9M = 2.75, -- Unused AutoFling parameter
+    F2Q6J = 15, -- Max forward/backward speed for AutoFling
+    L8H4P = 1.25, -- Height offset multiplier for AutoFling
+    K7R1B = 0.45, -- Velocity prediction multiplier
+    T9S3Y = 10, -- Unused AutoFling parameter
+    N6C8A = 0.3, -- Angular prediction weight
+    P5J2F = 10, -- Prediction history size
+    M1W7T = 0.2, -- Prediction smoothing factor
+    D4K9Q = 8, -- Min forward/backward speed for AutoFling
+    G3Y5V = 15, -- Max forward/backward speed for AutoFling
+    A2T6R = 5, -- Min height speed for AutoFling
+    B7H3N = 12, -- Max height speed for AutoFling
+    X4P8F = 10, -- Min forward/backward frequency for AutoFling
+    S6Q2J = 20, -- Max forward/backward frequency for AutoFling
+    R1M9D = 8, -- Min height frequency for AutoFling
+    V8W3L = 15, -- Max height frequency for AutoFling
+    C5T7Y = 10, -- Max AutoFling distance
+    J9N4P = 1, -- Respawn velocity multiplier
+    Q2K6G = 0.5, -- Accessory transparency during control
+    E3F8M = 0.3, -- Respawn confirmation time
+    Z7R5D = 2, -- Notification duration
+}
+
+local G8Q4X = B7C4T.M9H2K
+local W2T9F = B7C4T.X8Q3Z
+local R5J3K = ""
+local Y4C7N = true
+local N6P8V = {}
+local H1M2Q, L3F9T
+
+local D7K5R = nil
+local S9W4J = nil
+local A2T6M = nil
+local F8N3P = {} 
+local Q4G7Y = {} 
+local X5V2L = {} 
+local Z8D9A = {} 
+
+local M1C9T = {}
+local T3J8F = 0.1
+local U6R4N, O7P5Q, I2K9W = nil, nil, nil
+
+local E4L7X = {}
+
+function E4L7X.Z9T2M(N8K3P, C5R7J)
+    local B2G6S = Instance.new("ScreenGui")
+    B2G6S.Parent = F6N3X.PlayerGui
+    local W4Y1L = Instance.new("TextLabel")
+    W4Y1L.Size = UDim2.new(0, 150, 0, 30)
+    W4Y1L.Position = UDim2.new(0.5, -75, 0.1, -70)
+    W4Y1L.BackgroundTransparency = 0.5
+    W4Y1L.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    W4Y1L.TextColor3 = Color3.fromRGB(255, 255, 255)
+    W4Y1L.TextSize = 12
+    W4Y1L.Text = N8K3P
+    W4Y1L.TextWrapped = true
+    W4Y1L.Parent = B2G6S
+    task.spawn(function()
+        task.wait(C5R7J or 2)
+        for V6J4Z = 1, 10 do
+            W4Y1L.TextTransparency = V6J4Z / 10
+            W4Y1L.BackgroundTransparency = 0.5 + (V6J4Z / 20)
+            task.wait(0.05)
+        end
+        B2G6S:Destroy()
+    end)
+end
+
+function E4L7X.Q3B8N(G7T2P, R4M9J, Y2S5K, L6F3D, A1C7V, K9N4X)
+    local T5W2R = Instance.new("TextButton")
+    T5W2R.Size = L6F3D
+    T5W2R.Position = Y2S5K
+    T5W2R.BackgroundColor3 = A1C7V
+    T5W2R.TextColor3 = K9N4X
+    T5W2R.Text = R4M9J
+    T5W2R.TextScaled = true
+    T5W2R.Parent = G7T2P
+    local J3P6Y = Instance.new("UICorner")
+    J3P6Y.CornerRadius = UDim.new(0, 4)
+    J3P6Y.Parent = T5W2R
+    return T5W2R
+end
+
+function E4L7X.F6T9M(A8K4P, C2J7R, S9L3N, H5V2T, Q1F6Y, W7N8M, M4P5X)
+    local D3R9B = Instance.new("TextBox")
+    D3R9B.Size = Q1F6Y
+    D3R9B.Position = H5V2T
+    D3R9B.BackgroundColor3 = W7N8M
+    D3R9B.TextColor3 = M4P5X
+    D3R9B.Text = C2J7R
+    D3R9B.PlaceholderText = S9L3N
+    D3R9B.TextScaled = true
+    D3R9B.Parent = A8K4P
+    local N6G2L = Instance.new("UICorner")
+    N6G2L.CornerRadius = UDim.new(0, 4)
+    N6G2L.Parent = D3R9B
+    return D3R9B
+end
+
+function E4L7X.P7H3T(J4K9N, V8S2M)
+    if sethiddenproperty then
+        sethiddenproperty(J4K9N, "BackendAccoutrementState", V8S2M)
+    elseif setscriptable then
+        setscriptable(J4K9N, "BackendAccoutrementState", true)
+        J4K9N.BackendAccoutrementState = V8S2M
+    else
+        local K5C7R = pcall(function()
+            J4K9N.BackendAccoutrementState = V8S2M
+        end)
+        if not K5C7R then
+            error("Executor not supported for hat state modification!")
+        end
+    end
+end
+
+function E4L7X.W2N6P(L9T3M, F5J8K, G3R7Q, A1P4V, Y6C2N)
+    local T8K5B = Instance.new("Animation")
+    T8K5B.AnimationId = "https://assetdelivery.roblox.com/v1/asset/?id=" .. tostring(F5J8K)
+    local Q4W9R = L9T3M:LoadAnimation(T8K5B)
+    Q4W9R.Priority = A1P4V
+    Q4W9R:Play()
+    Q4W9R:AdjustSpeed(G3R7Q)
+    Q4W9R:AdjustWeight(Y6C2N)
+    return Q4W9R
+end
+
+function E4L7X.S3F9J(K7N2T)
+    if type(K7N2T) ~= "string" then
+        warn("findPlayer: Input is not a string, got " .. tostring(K7N2T))
+        return {}
+    end
+    K7N2T = K7N2T:lower()
+    local C9P6V = {}
+    if K7N2T == "all" then
+        for _, D4R8Y in pairs(P4K7N:GetPlayers()) do
+            if D4R8Y ~= F6N3X and D4R8Y.Character and D4R8Y.Character:FindFirstChild("HumanoidRootPart") and D4R8Y.Character:FindFirstChild("Humanoid") then
+                local H2M7Q = D4R8Y.Character.Humanoid
+                if not H2M7Q.Sit then
+                    table.insert(C9P6V, D4R8Y)
+                end
+            end
+        end
+        return C9P6V
+    end
+    local V3T5N = {}
+    for W8J4L in string.gmatch(K7N2T, "[^,]+") do
+        local X1F9R = W8J4L:match("^%s*(.-)%s*$")
+        if X1F9R then
+            table.insert(V3T5N, X1F9R)
+        end
+    end
+    for _, W8J4L in ipairs(V3T5N) do
+        if W8J4L ~= "" then
+            for _, D4R8Y in pairs(P4K7N:GetPlayers()) do
+                if D4R8Y ~= F6N3X and (D4R8Y.Name:lower():find(W8J4L, 1, true) or (D4R8Y.DisplayName and D4R8Y.DisplayName:lower():find(W8J4L, 1, true))) and
+                   D4R8Y.Character and D4R8Y.Character:FindFirstChild("HumanoidRootPart") and D4R8Y.Character:FindFirstChild("Humanoid") then
+                    local H2M7Q = D4R8Y.Character.Humanoid
+                    if not H2M7Q.Sit then
+                        local Q6G3P = false
+                        for _, R5N8V in ipairs(C9P6V) do
+                            if R5N8V == D4R8Y then
+                                Q6G3P = true
+                                break
+                            end
+                        end
+                        if not Q6G3P then
+                            table.insert(C9P6V, D4R8Y)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return C9P6V
+end
+
+local function T2M7P()
+    local G4K9N = F6N3X:WaitForChild("PlayerScripts").PlayerModule.CameraModule.ZoomController.Popper
+    for J3R5V, W8Y2T in next, getgc() do
+        if getfenv(W8Y2T).script == G4K9N and typeof(W8Y2T) == "function" then
+            for F7P4L, S1N6Q in next, debug.getconstants(W8Y2T) do
+                if tonumber(S1N6Q) == 0.25 then
+                    debug.setconstant(W8Y2T, F7P4L, 0)
+                elseif tonumber(S1N6Q) == 0 then
+                    debug.setconstant(W8Y2T, F7P4L, 0.25)
+                end
+            end
+        end
+    end
+end
+
+local function A9F3J()
+    local K5H7R = F6N3X.Character or F6N3X.CharacterAdded:Wait()
+    local Q2T4M = K5H7R:WaitForChild("Humanoid")
+    H1M2Q = Q2T4M.WalkSpeed
+    L3F9T = Q2T4M.UseJumpPower and Q2T4M.JumpPower or Q2T4M.JumpHeight
+    Q2T4M.WalkSpeed = 0
+    if Q2T4M.UseJumpPower then
+        Q2T4M.JumpPower = 0
+    else
+        Q2T4M.JumpHeight = 0
+    end
+    return K5H7R, Q2T4M
+end
+
+local function N6W8G()
+    local Y3P5V = Instance.new("ScreenGui")
+    Y3P5V.Name = "V2Q4T"
+    Y3P5V.Parent = F6N3X.PlayerGui
+    local R7J2N = Instance.new("TextLabel")
+    R7J2N.Size = UDim2.new(0, 300, 0, 20)
+    R7J2N.Position = UDim2.new(0, 10, 0, 10)
+    R7J2N.BackgroundTransparency = 1
+    R7J2N.TextColor3 = Color3.fromRGB(255, 255, 255)
+    R7J2N.TextSize = 14
+    R7J2N.TextXAlignment = Enum.TextXAlignment.Left
+    R7J2N.Text = "Creating Part to control hats (1/3)"
+    R7J2N.Parent = Y3P5V
+    return Y3P5V, R7J2N
+end
+
+local function C4T9L(F8J3P, M2K7R, W5N6V, L1S4Q)
+    F8J3P.Text = string.format("%s (%d/%d)", M2K7R, W5N6V, L1S4Q)
+end
+
+local function P3H6R()
+    local T7Y2N = workspace:FindFirstChild("X4G9P")
+    if T7Y2N then
+        T7Y2N:Destroy()
+    end
+    local A6F8V = Instance.new("Part")
+    A6F8V.Size = B7C4T.L6T2R
+    A6F8V.Anchored = false
+    A6F8V.CanCollide = false
+    A6F8V.Transparency = B7C4T.G8N4P
+    A6F8V.Name = "X4G9P"
+    A6F8V.Position = Y2J8V.CFrame.Position + Y2J8V.CFrame.LookVector * B7C4T.H1D7J
+    A6F8V.Parent = workspace
+    
+    local B1A2C = Instance.new("Attachment", A6F8V)
+    B1A2C.Name = "ControlAttachment"
+    table.insert(Z8D9A, B1A2C)
+
+    local S9W3K = Instance.new("BodyVelocity")
+    S9W3K.MaxForce = B7C4T.W9V3F
+    S9W3K.Velocity = Vector3.new(0, 0, 0)
+    S9W3K.Parent = A6F8V
+    if B7C4T.X5R9S then
+        Y2J8V.CameraType = B7C4T.Z4M6C
+        Y2J8V.CameraSubject = A6F8V
+    end
+    workspace.ChildAdded:Connect(function(D2N5T)
+        if D2N5T.Name == "X4G9P" and D2N5T ~= A6F8V then
+            D2N5T:Destroy()
+        end
+    end)
+    return A6F8V, S9W3K
+end
+
+local function G7Q2N(J4T8K, M9V3L, Q5P6Y)
+    local R3F9W = require(F6N3X.PlayerScripts:WaitForChild("PlayerModule"):WaitForChild("ControlModule"))
+    local K2N7P = Vector3.new(0, 0, 0)
+    local W8S4J = {
+        [Enum.KeyCode.W] = Vector3.new(0, 0, -1),
+        [Enum.KeyCode.S] = Vector3.new(0, 0, 1),
+        [Enum.KeyCode.A] = Vector3.new(-1, 0, 0),
+        [Enum.KeyCode.D] = Vector3.new(1, 0, 0),
+    }
+    T8R2M.InputBegan:Connect(function(C6K9F, L1P3R)
+        if not L1P3R and W8S4J[C6K9F.KeyCode] then
+            K2N7P = K2N7P + W8S4J[C6K9F.KeyCode]
+        end
+    end)
+    T8R2M.InputEnded:Connect(function(C6K9F, L1P3R)
+        if not L1P3R and W8S4J[C6K9F.KeyCode] then
+            K2N7P = K2N7P - W8S4J[C6K9F.KeyCode]
+        end
+    end)
+    local B4T5Q
+    B4T5Q = J9L5Q.RenderStepped:Connect(function(H3Y7N)
+        if not J4T8K or not J4T8K.Parent then
+            if B4T5Q then
+                B4T5Q:Disconnect()
+                B4T5Q = nil
+            end
+            if Q5P6Y and Q5P6Y.Parent then
+                Y2J8V.CameraType = Enum.CameraType.Custom
+                Y2J8V.CameraSubject = Q5P6Y
+            end
+            return
+        end
+        if Y2J8V then
+            if B7C4T.X5R9S then
+                if Y2J8V.CameraType ~= B7C4T.Z4M6C or Y2J8V.CameraSubject ~= J4T8K then
+                    Y2J8V.CameraType = B7C4T.Z4M6C
+                    Y2J8V.CameraSubject = J4T8K
+                end
+            end
+            local A9F2V = R3F9W:GetMoveVector()
+            local S6K3P = Vector3.new(A9F2V.X, 0, A9F2V.Z)
+            local N7W8T = S6K3P.Magnitude > 0 and S6K3P or K2N7P
+            local L4J5R = N7W8T.Magnitude > 1 and N7W8T.Unit or N7W8T
+            local Q1C6Y = L4J5R * B7C4T.K5P9M
+            J4T8K.CFrame = CFrame.new(J4T8K.Position, J4T8K.Position + Y2J8V.CFrame.LookVector)
+            M9V3L.Velocity = Y2J8V.CFrame:VectorToWorldSpace(Q1C6Y)
+        end
+    end)
+    return B4T5Q
+end
+
+local function F5N9K(T2H6P, Y8M4Q, A3K7F)
+    local W4J3R = T2H6P:WaitForChild("HumanoidRootPart", B7C4T.Q7M2V)
+    local C9T5N = T2H6P:FindFirstChild("UpperTorso") or T2H6P:FindFirstChild("Torso")
+    local S6P8V = W4J3R.CFrame
+    local Q1F2Y = workspace.FallenPartsDestroyHeight
+    workspace.FallenPartsDestroyHeight = 0/0
+    local D7A4K = {}
+    for _, B3N6T in pairs(T2H6P:GetChildren()) do
+        if B3N6T:IsA("Accessory") then
+            table.insert(D7A4K, B3N6T)
+        end
+    end
+    local M2G9S = {}
+    for _, B3N6T in pairs(D7A4K) do
+        table.insert(M2G9S, B3N6T.Changed:Connect(function(R5V7P)
+            if R5V7P == "BackendAccoutrementState" then
+                E4L7X.P7H3T(B3N6T, 0)
+            end
+        end))
+        E4L7X.P7H3T(B3N6T, B7C4T.U3K8N)
+    end
+    local L6R4J = CFrame.new(W4J3R.Position.X, Q1F2Y + B7C4T.A1P4Z, W4J3R.Position.Z)
+    if Y8M4Q.RigType == Enum.HumanoidRigType.R15 then
+        L6R4J = L6R4J * CFrame.Angles(B7C4T.C9H5F, 0, 0)
+        Y8M4Q:ChangeState(16)
+        E4L7X.W2N6P(Y8M4Q, B7C4T.N3Q8T, B7C4T.M4J1B, B7C4T.R6P2Y, B7C4T.S7W9G).TimePosition = B7C4T.E8T3L
+    else
+        Y8M4Q:ChangeState(16)
+        E4L7X.W2N6P(Y8M4Q, B7C4T.V2A7K, B7C4T.M4J1B, B7C4T.R6P2Y, B7C4T.S7W9G).TimePosition = B7C4T.E8T3L
+    end
+    spawn(function()
+        while W4J3R.Parent ~= nil do
+            W4J3R.CFrame = L6R4J
+            W4J3R.Velocity = Vector3.new(0, B7C4T.D2Y6V, 0)
+            W4J3R.RotVelocity = Vector3.new(0, 0, 0)
+            game:GetService("RunService").Heartbeat:Wait()
+        end
+    end)
+    task.wait(B7C4T.E9K5H)
+    Y8M4Q:ChangeState(15)
+    C9T5N.AncestryChanged:Wait()
+    for _, B3N6T in pairs(M2G9S) do
+        B3N6T:Disconnect()
+    end
+    for _, B3N6T in pairs(D7A4K) do
+        E4L7X.P7H3T(B3N6T, B7C4T.I7Q5T)
+    end
+    spawn(function()
+        F6N3X.CharacterAdded:Wait():WaitForChild("HumanoidRootPart", B7C4T.Q7M2V).CFrame = S6P8V
+        workspace.FallenPartsDestroyHeight = Q1F2Y
+    end)
+    local N4W7P = false
+    local G2T3M = tick() + 5
+    repeat
+        local J8F9K = false
+        for _, B3N6T in pairs(D7A4K) do
+            if B3N6T:FindFirstChild("Handle") then
+                J8F9K = true
+                if B3N6T.Handle.CanCollide then
+                    N4W7P = true
+                    break
+                end
+            end
+        end
+        if not J8F9K then
+            break
+        end
+        if tick() > G2T3M then
+            break
+        end
+        task.wait()
+    until F6N3X.Character ~= T2H6P or N4W7P
+    return N4W7P, D7A4K, S6P8V
+end
+
+local function K9R4T()
+    if D7K5R then pcall(function() D7K5R:Destroy() end) end
+    if S9W4J then S9W4J:Disconnect() end
+    if A2T6M then A2T6M:Disconnect() end
+    if U6R4N then U6R4N:Disconnect() end
+    if O7P5Q then O7P5Q:Disconnect() end
+    if I2K9W then I2K9W:Disconnect() end
+    for _, B3F7N in pairs(F8N3P) do if B3F7N and B3F7N.Parent then pcall(function() B3F7N:Destroy() end) end end
+    for _, Q1G6T in pairs(Q4G7Y) do if Q1G6T and Q1G6T.Parent then pcall(function() Q1G6T:Destroy() end) end end
+    for _, W5V2R in pairs(X5V2L) do if W5V2R and W5V2R.Parent then pcall(function() W5V2R:Destroy() end) end end
+    for _, Z1A3S in pairs(Z8D9A) do if Z1A3S and Z1A3S.Parent then pcall(function() Z1A3S:Destroy() end) end end
+    local C8J3P = F6N3X.PlayerGui:FindFirstChild("L5N7Q")
+    if C8J3P then pcall(function() C8J3P:Destroy() end) end
+    local A4T9V = F6N3X.PlayerGui:FindFirstChild("V2Q4T")
+    if A4T9V then pcall(function() A4T9V:Destroy() end) end
+    local H7P2R = F6N3X.Character
+    if H7P2R then
+        local S3M6Q = H7P2R:FindFirstChildOfClass("Humanoid")
+        if S3M6Q then
+            S3M6Q.WalkSpeed = H1M2Q
+            if S3M6Q.UseJumpPower then
+                S3M6Q.JumpPower = L3F9T
+            else
+                S3M6Q.JumpHeight = L3F9T
+            end
+            Y2J8V.CameraType = Enum.CameraType.Custom
+            Y2J8V.CameraSubject = S3M6Q
+        end
+    end
+    if replicatesignal then
+        replicatesignal(F6N3X.ConnectDiedSignalBackend)
+    else
+        F6N3X:LoadCharacter()
+    end
+end
+
+local function J2F5G()
+    local N8W3T = Instance.new("ScreenGui")
+    N8W3T.Name = "Y6K9J"
+    N8W3T.Parent = F6N3X.PlayerGui
+    N8W3T.ResetOnSpawn = true
+    local P4T7R = E4L7X.Q3B8N(N8W3T, "Respawn (Click if script fails)", UDim2.new(0, 10, 0, 50), UDim2.new(0, 250, 0, 25), Color3.fromRGB(70, 70, 70), Color3.fromRGB(255, 255, 255))
+    P4T7R.Font = Enum.Font.SourceSans
+    P4T7R.TextSize = 16
+    local A1C3M = false
+    local S6J9F = 0
+    P4T7R.MouseButton1Click:Connect(function()
+        if not A1C3M then
+            A1C3M = true
+            P4T7R.Text = "Click Again"
+            S6J9F = tick()
+            task.spawn(function()
+                task.wait(B7C4T.E3F8M)
+                if A1C3M then
+                    A1C3M = false
+                    P4T7R.Text = "Respawn (Click if script fails)"
+                end
+            end)
+        else
+            if tick() - S6J9F <= B7C4T.E3F8M then
+                A1C3M = false
+                P4T7R.Text = "Respawn (Click if script fails)"
+                K9R4T()
+            end
+        end
+    end)
+    return P4T7R
+end
+
+local function W3T8N(G6K2P)
+    local F9J5R = workspace:FindFirstChild("X4G9P")
+    if not F9J5R then
+        E4L7X.Z9T2M("X4G9P not found", 2)
+        return
+    end
+    Y4C7N = not Y4C7N
+    if G6K2P then
+        G6K2P.Text = Y4C7N and "Drop Hats" or "Control Hats"
+    end
+    for _, L2P7V in pairs(N6P8V) do
+        local Q5N3K = L2P7V:FindFirstChild("Handle")
+        if Q5N3K then
+            if Y4C7N then
+                pcall(function()
+                    Q5N3K.Massless = true
+                    Q5N3K.CanCollide = false
+                    Q5N3K.Transparency = B7C4T.Q2K6G
+                end)
+                
+                local V4S7A = Q5N3K:FindFirstChildOfClass("AlignPosition") or Instance.new("AlignPosition", Q5N3K)
+                local B1A2C_Control = F9J5R:FindFirstChild("ControlAttachment")
+                local B1A2C_Hat = Q5N3K:FindFirstChild("HatAttachment") or Instance.new("Attachment", Q5N3K)
+                B1A2C_Hat.Name = "HatAttachment"
+                
+                V4S7A.MaxForce = B7C4T.APMF7
+                V4S7A.MaxVelocity = B7C4T.APMV2
+                V4S7A.Responsiveness = B7C4T.APRS9
+                V4S7A.Attachment0 = B1A2C_Hat
+                V4S7A.Attachment1 = B1A2C_Control
+                
+                local M3W6Y = Q5N3K:FindFirstChildOfClass("BodyGyro") or Instance.new("BodyGyro", Q5N3K)
+                M3W6Y.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+                M3W6Y.P = B7C4T.A6R8J * B7C4T.J9N4P
+                M3W6Y.D = B7C4T.C2Y3L
+                M3W6Y.CFrame = F9J5R.CFrame
+            else
+                pcall(function()
+                    Q5N3K.Massless = false
+                    Q5N3K.CanCollide = true
+                    Q5N3K.Transparency = 0
+                end)
+                if Q5N3K:FindFirstChildOfClass("AlignPosition") then Q5N3K:FindFirstChildOfClass("AlignPosition"):Destroy() end
+                if Q5N3K:FindFirstChild("HatAttachment") then Q5N3K:FindFirstChild("HatAttachment"):Destroy() end
+                if Q5N3K:FindFirstChildOfClass("BodyGyro") then Q5N3K:FindFirstChildOfClass("BodyGyro"):Destroy() end
+                if Q5N3K:FindFirstChildOfClass("BodyAngularVelocity") then Q5N3K:FindFirstChildOfClass("BodyAngularVelocity"):Destroy() end
+            end
+        end
+    end
+    E4L7X.Z9T2M(Y4C7N and "Hats controlled" or "Hats dropped", 2)
+end
+
+local function L8F6M()
+    local T4N7P = Instance.new("ScreenGui")
+    T4N7P.Name = "L5N7Q"
+    T4N7P.Parent = F6N3X.PlayerGui
+    local S2J3R = Instance.new("Frame")
+    S2J3R.Size = B7C4T.T5S3B
+    S2J3R.Position = B7C4T.K8G2P
+    S2J3R.BackgroundColor3 = B7C4T.N1C7R
+    S2J3R.BorderSizePixel = 0
+    S2J3R.Parent = T4N7P
+    local W6P8Y = Instance.new("UICorner", S2J3R)
+    W6P8Y.CornerRadius = UDim.new(0, 4)
+    local A9K4F = Instance.new("Frame")
+    A9K4F.Size = B7C4T.T5S3B
+    A9K4F.Position = B7C4T.K8G2P
+    A9K4F.BackgroundColor3 = B7C4T.N1C7R
+    A9K4F.BorderSizePixel = 0
+    A9K4F.Visible = false
+    A9K4F.Parent = T4N7P
+    local Q3T5N = Instance.new("UICorner", A9K4F)
+    Q3T5N.CornerRadius = UDim.new(0, 4)
+    local F7J2V = E4L7X.Q3B8N(T4N7P, "-", UDim2.new(0, 10, 0, 0), UDim2.new(0, 25, 0, 25), B7C4T.L4F6Q, B7C4T.J2W9X)
+    local M5G8R = E4L7X.Q3B8N(T4N7P, "⚙️", UDim2.new(0, 40, 0, 0), UDim2.new(0, 25, 0, 25), B7C4T.L4F6Q, B7C4T.J2W9X)
+    local Y1C3T = false
+    local R6W9L = E4L7X.Q3B8N(S2J3R, G8Q4X and "Stop Fling" or "Start Fling", UDim2.new(0, 10, 0, B7C4T.R7N5Y[1]), B7C4T.Y6B8D, B7C4T.P3T4M, B7C4T.J2W9X)
+    local N2F5P = E4L7X.Q3B8N(S2J3R, W2T9F and "Disable AutoFling" or "Enable AutoFling", UDim2.new(0, 10, 0, B7C4T.R7N5Y[2]), B7C4T.Y6B8D, B7C4T.P3T4M, B7C4T.J2W9X)
+    local C8T7J = E4L7X.F6T9M(S2J3R, "", "Target Player(s) or 'all'", UDim2.new(0, 10, 0, B7C4T.R7N5Y[3]), B7C4T.Y6B8D, B7C4T.P3T4M, B7C4T.J2W9X)
+    local L3K6P = E4L7X.Q3B8N(S2J3R, Y4C7N and "Drop Hats" or "Control Hats", UDim2.new(0, 10, 0, B7C4T.R7N5Y[4]), B7C4T.Y6B8D, B7C4T.P3T4M, B7C4T.J2W9X)
+    local T9S2F = E4L7X.F6T9M(S2J3R, tostring(B7C4T.K5P9M), "Hat Fly Speed", UDim2.new(0, 10, 0, B7C4T.R7N5Y[5]), B7C4T.Y6B8D, B7C4T.P3T4M, B7C4T.J2W9X)
+    local Q4M8N = E4L7X.Q3B8N(S2J3R, "Respawn", UDim2.new(0, 10, 0, B7C4T.R7N5Y[6]), B7C4T.Y6B8D, B7C4T.P3T4M, B7C4T.J2W9X)
+    local A7F3T = E4L7X.F6T9M(A9K4F, tostring(B7C4T.APRS9), "Responsiveness", UDim2.new(0, 10, 0, B7C4T.R7N5Y[1]), B7C4T.Y6B8D, B7C4T.P3T4M, B7C4T.J2W9X)
+    local S5N9R = E4L7X.F6T9M(A9K4F, tostring(B7C4T.Q2K6G), "Accessory Transparency (0-1)", UDim2.new(0, 10, 0, B7C4T.R7N5Y[2]), B7C4T.Y6B8D, B7C4T.P3T4M, B7C4T.J2W9X)
+    local G2W4J = E4L7X.F6T9M(A9K4F, tostring(B7C4T.A6R8J), "Rotation Strength", UDim2.new(0, 10, 0, B7C4T.R7N5Y[3]), B7C4T.Y6B8D, B7C4T.P3T4M, B7C4T.J2W9X)
+    local K1J6P = E4L7X.F6T9M(A9K4F, tostring(B7C4T.C5T7Y), "Auto-Fling Max Distance", UDim2.new(0, 10, 0, B7C4T.R7N5Y[4]), B7C4T.Y6B8D, B7C4T.P3T4M, B7C4T.J2W9X)
+    local P8T3F = E4L7X.F6T9M(A9K4F, tostring(B7C4T.U4A7D), "Auto-Fling Duration (s)", UDim2.new(0, 10, 0, B7C4T.R7N5Y[5]), B7C4T.Y6B8D, B7C4T.P3T4M, B7C4T.J2W9X)
+    local W3Y9N = E4L7X.F6T9M(A9K4F, tostring(B7C4T.Q3F8W), "Fling Power", UDim2.new(0, 10, 0, B7C4T.R7N5Y[6]), B7C4T.Y6B8D, B7C4T.P3T4M, B7C4T.J2W9X)
+    
+    F7J2V.MouseButton1Click:Connect(function()
+        S2J3R.Visible = not S2J3R.Visible and not Y1C3T
+        A9K4F.Visible = not A9K4F.Visible and Y1C3T
+        F7J2V.Text = (S2J3R.Visible or A9K4F.Visible) and "-" or "+"
+    end)
+    M5G8R.MouseButton1Click:Connect(function()
+        Y1C3T = not Y1C3T
+        S2J3R.Visible = not Y1C3T
+        A9K4F.Visible = Y1C3T
+        F7J2V.Text = (S2J3R.Visible or A9K4F.Visible) and "-" or "+"
+    end)
+    R6W9L.MouseButton1Click:Connect(function()
+        G8Q4X = not G8Q4X
+        R6W9L.Text = G8Q4X and "Stop Fling" or "Start Fling"
+    end)
+    N2F5P.MouseButton1Click:Connect(function()
+        W2T9F = not W2T9F
+        N2F5P.Text = W2T9F and "Disable AutoFling" or "Enable AutoFling"
+        if W2T9F then
+            R5J3K = C8T7J.Text
+            E4L7X.Z9T2M(R5J3K == "" and "AutoFling enabled, no targets set" or "AutoFling enabled for: " .. R5J3K, B7C4T.Z7R5D)
+        else
+            E4L7X.Z9T2M("AutoFling Disabled", B7C4T.Z7R5D)
+        end
+    end)
+    C8T7J.FocusLost:Connect(function(J9P4R)
+        if J9P4R then
+            R5J3K = C8T7J.Text
+            if W2T9F then
+                local H3F6N = E4L7X.S3F9J(R5J3K)
+                if #H3F6N > 0 then
+                    if R5J3K:lower() == "all" then
+                        E4L7X.Z9T2M("AutoFling targeting ALL", B7C4T.Z7R5D)
+                    else
+                        local T2W8V = {}
+                        for _, D4R8Y in ipairs(H3F6N) do table.insert(T2W8V, D4R8Y.Name) end
+                        E4L7X.Z9T2M("Targets updated: " .. table.concat(T2W8V, ", "), B7C4T.Z7R5D)
+                    end
+                else
+                    E4L7X.Z9T2M("No valid players found for: " .. R5J3K, B7C4T.Z7R5D)
+                end
+            elseif R5J3K ~= "" then
+                E4L7X.Z9T2M("Target set to: " .. R5J3K, B7C4T.Z7R5D)
+            else
+                E4L7X.Z9T2M("Target cleared", B7C4T.Z7R5D)
+            end
+        end
+    end)
+    T9S2F.FocusLost:Connect(function(J9P4R)
+        if J9P4R then
+            local C6K3N = tonumber(T9S2F.Text)
+            if C6K3N and C6K3N >= 0 then
+                B7C4T.K5P9M = C6K3N
+            else
+                T9S2F.Text = tostring(B7C4T.K5P9M)
+                E4L7X.Z9T2M("Invalid Fly Speed value (must be >= 0)")
+            end
+        end
+    end)
+    A7F3T.FocusLost:Connect(function(J9P4R)
+        if J9P4R then
+            local C6K3N = tonumber(A7F3T.Text)
+            if C6K3N and C6K3N >= 0 then B7C4T.APRS9 = C6K3N else A7F3T.Text = tostring(B7C4T.APRS9) E4L7X.Z9T2M("Invalid Responsiveness value (must be >= 0)") end
+        end
+    end)
+    G2W4J.FocusLost:Connect(function(J9P4R)
+        if J9P4R then
+            local C6K3N = tonumber(G2W4J.Text)
+            if C6K3N and C6K3N >= 0 then B7C4T.A6R8J = C6K3N else G2W4J.Text = tostring(B7C4T.A6R8J) E4L7X.Z9T2M("Invalid Rotation Strength value (must be >= 0)") end
+        end
+    end)
+    S5N9R.FocusLost:Connect(function(J9P4R)
+        if J9P4R then
+            local C6K3N = tonumber(S5N9R.Text)
+            if C6K3N and C6K3N >= 0 and C6K3N <= 1 then
+                B7C4T.Q2K6G = C6K3N
+                for _, L2P7V in pairs(N6P8V) do
+                    local Q5N3K = L2P7V:FindFirstChild("Handle")
+                    if Q5N3K and Y4C7N then pcall(function() Q5N3K.Transparency = B7C4T.Q2K6G end) end
+                end
+            else
+                S5N9R.Text = tostring(B7C4T.Q2K6G)
+                E4L7X.Z9T2M("Invalid Transparency value (0-1)")
+            end
+        end
+    end)
+    K1J6P.FocusLost:Connect(function(J9P4R)
+        if J9P4R then
+            local C6K3N = tonumber(K1J6P.Text)
+            if C6K3N and C6K3N >= 0 then B7C4T.C5T7Y = C6K3N else K1J6P.Text = tostring(B7C4T.C5T7Y) E4L7X.Z9T2M("Invalid Max Distance value (must be >= 0)") end
+        end
+    end)
+    P8T3F.FocusLost:Connect(function(J9P4R)
+        if J9P4R then
+            local C6K3N = tonumber(P8T3F.Text)
+            if C6K3N and C6K3N >= 0 then B7C4T.U4A7D = C6K3N else P8T3F.Text = tostring(B7C4T.U4A7D) E4L7X.Z9T2M("Invalid Auto-Fling Duration value (must be >= 0)") end
+        end
+    end)
+    W3Y9N.FocusLost:Connect(function(J9P4R)
+        if J9P4R then
+            local C6K3N = tonumber(W3Y9N.Text)
+            if C6K3N and C6K3N >= 0 then
+                B7C4T.Q3F8W = C6K3N
+            else
+                W3Y9N.Text = tostring(B7C4T.Q3F8W)
+                E4L7X.Z9T2M("Invalid Fling Power value (must be >= 0)")
+            end
+        end
+    end)
+    local D2F8M = false
+    local J7K3P = 0
+    Q4M8N.MouseButton1Click:Connect(function()
+        if not D2F8M then
+            D2F8M = true
+            Q4M8N.Text = "Click Again"
+            J7K3P = tick()
+            task.spawn(function()
+                task.wait(B7C4T.E3F8M)
+                if D2F8M then D2F8M = false Q4M8N.Text = "Respawn" end
+            end)
+        else
+            if tick() - J7K3P <= B7C4T.E3F8M then
+                D2F8M = false
+                Q4M8N.Text = "Respawn"
+                K9R4T()
+            end
+        end
+    end)
+    L3K6P.MouseButton1Click:Connect(function() W3T8N(L3K6P) end)
+    return Q4M8N, L3K6P
+end
+
+local function A5N7J(F3T2K)
+    F6N3X.CharacterAdded:Connect(function(R8C6P)
+        local Q4M3Y = R8C6P:WaitForChild("Humanoid")
+        N6P8V = {}
+        for _, B3N6T in pairs(R8C6P:GetChildren()) do
+            if B3N6T:IsA("Accessory") and B3N6T:FindFirstChild("Handle") then
+                table.insert(N6P8V, B3N6T)
+            end
+        end
+        if Y4C7N then
+            local F9J5R = workspace:FindFirstChild("X4G9P")
+            if F9J5R then
+                for _, L2P7V in pairs(N6P8V) do
+                    local Q5N3K = L2P7V:FindFirstChild("Handle")
+                    if Q5N3K then
+                        pcall(function()
+                            Q5N3K.Massless = true
+                            Q5N3K.CanCollide = false
+                            Q5N3K.Transparency = B7C4T.Q2K6G
+                        end)
+                        
+                        local V4S7A = Q5N3K:FindFirstChildOfClass("AlignPosition") or Instance.new("AlignPosition", Q5N3K)
+                        local B1A2C_Control = F9J5R:FindFirstChild("ControlAttachment")
+                        local B1A2C_Hat = Q5N3K:FindFirstChild("HatAttachment") or Instance.new("Attachment", Q5N3K)
+                        B1A2C_Hat.Name = "HatAttachment"
+
+                        V4S7A.MaxForce = B7C4T.APMF7
+                        V4S7A.MaxVelocity = B7C4T.APMV2
+                        V4S7A.Responsiveness = B7C4T.APRS9
+                        V4S7A.Attachment0 = B1A2C_Hat
+                        V4S7A.Attachment1 = B1A2C_Control
+                        
+                        local M3W6Y = Q5N3K:FindFirstChildOfClass("BodyGyro") or Instance.new("BodyGyro", Q5N3K)
+                        M3W6Y.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+                        M3W6Y.P = B7C4T.A6R8J * B7C4T.J9N4P
+                        M3W6Y.D = B7C4T.C2Y3L
+                        M3W6Y.CFrame = F9J5R.CFrame
+                    end
+                end
+            end
+        end
+        if B7C4T.X5R9S and F3T2K and F3T2K.Parent then
+            Y2J8V.CameraType = B7C4T.Z4M6C
+            Y2J8V.CameraSubject = F3T2K
+        else
+            local T7H9Q = R8C6P:WaitForChild("Humanoid", B7C4T.Q7M2V)
+            if T7H9Q then
+                Y2J8V.CameraType = Enum.CameraType.Custom
+                Y2J8V.CameraSubject = T7H9Q
+            end
+        end
+    end)
+end
+
+local function M6T9F(H5C7K, J2W4N)
+    local R8P3Q = workspace:FindFirstChild("X4G9P")
+    if not R8P3Q then return end
+    
+    local B1A2C_Control = R8P3Q:FindFirstChild("ControlAttachment")
+    if not B1A2C_Control then
+        B1A2C_Control = Instance.new("Attachment", R8P3Q)
+        B1A2C_Control.Name = "ControlAttachment"
+        table.insert(Z8D9A, B1A2C_Control)
+    end
+    
+    local K9F6V, T3N8J = nil, 1
+    local S7M2P, Q1T5R, W4C9L = {}, {}, false
+    N6P8V = {}
+    if H5C7K then
+        for _, B3N6T in pairs(H5C7K:GetChildren()) do
+            if B3N6T:IsA("Accessory") and B3N6T:FindFirstChild("Handle") then
+                table.insert(N6P8V, B3N6T)
+            end
+        end
+    end
+    local function A4N7P()
+        if not R8P3Q or not R8P3Q.Parent then return end
+        local F2K6S, L8J3T = R8P3Q.Position, R8P3Q.CFrame
+        if W2T9F and R5J3K ~= "" then
+            local G3W9Y = E4L7X.S3F9J(R5J3K)
+            if G3W9Y and #G3W9Y > 0 then
+                K9F6V = G3W9Y
+                if T3N8J > #K9F6V or T3N8J <= 0 then T3N8J = 1 end
+                W4C9L = true
+                for _, D4R8Y in ipairs(K9F6V) do
+                    local T7H2K = D4R8Y.Character
+                    if T7H2K then
+                        local C5P9R = T7H2K:FindFirstChild("HumanoidRootPart")
+                        if C5P9R and C5P9R.Velocity.Magnitude <= B7C4T.W6T3R then
+                            W4C9L = false
+                            break
+                        end
+                    else
+                        W4C9L = false
+                        break
+                    end
+                end
+            else K9F6V, T3N8J, W4C9L = nil, 1, false end
+        else K9F6V, T3N8J, W4C9L = nil, 1, false end
+        for _, N2F6Y in pairs(workspace:GetDescendants()) do
+            if N2F6Y:IsA("BasePart") and N2F6Y.Name == "Handle" then
+                local A7T3P, M4K8V = false, nil
+                for _, L2P7V in pairs(N6P8V) do
+                    if L2P7V:FindFirstChild("Handle") == N2F6Y or N2F6Y.Parent == L2P7V then
+                        A7T3P, M4K8V = true, L2P7V break
+                    end
+                end
+                if not A7T3P or not Y4C7N then continue end
+                local B6J9S, D1W4T = pcall(function() return M4K8V.BackendAccoutrementState end)
+                if B6J9S and D1W4T ~= B7C4T.I7Q5T then continue end
+                pcall(function()
+                    N2F6Y.CanCollide = false
+                    N2F6Y.Transparency = B7C4T.Q2K6G
+                end)
+                
+                local V4S7A = N2F6Y:FindFirstChildOfClass("AlignPosition") or Instance.new("AlignPosition", N2F6Y)
+                V4S7A.MaxForce = B7C4T.APMF7
+                V4S7A.MaxVelocity = B7C4T.APMV2
+                V4S7A.Responsiveness = B7C4T.APRS9
+                if not table.find(F8N3P, V4S7A) then table.insert(F8N3P, V4S7A) end
+
+                local B1A2C_Hat = N2F6Y:FindFirstChild("HatAttachment") or Instance.new("Attachment", N2F6Y)
+                B1A2C_Hat.Name = "HatAttachment"
+                if not table.find(Z8D9A, B1A2C_Hat) then table.insert(Z8D9A, B1A2C_Hat) end
+
+                V4S7A.Attachment0 = B1A2C_Hat
+                V4S7A.Attachment1 = B1A2C_Control
+
+                local P6W2R = N2F6Y:FindFirstChildOfClass("BodyGyro") or Instance.new("BodyGyro", N2F6Y)
+                P6W2R.MaxTorque, P6W2R.P, P6W2R.D = Vector3.new(math.huge,math.huge,math.huge), B7C4T.A6R8J * B7C4T.J9N4P, B7C4T.C2Y3L
+                if not table.find(Q4G7Y, P6W2R) then table.insert(Q4G7Y, P6W2R) end
+                
+                if not V4S7A or not P6W2R then continue end
+                local S9C4F, T2R7J = F2K6S, L8J3T
+                local J5F8N = 0
+                if W2T9F and K9F6V and #K9F6V > 0 and not (R5J3K:lower() == "all" and W4C9L) then
+                    if T3N8J > #K9F6V then T3N8J = 1 end
+                    local G7P4L = K9F6V[T3N8J]
+                    local T7H2K = G7P4L and G7P4L.Character
+                    local C5P9R = T7H2K and T7H2K:FindFirstChild("HumanoidRootPart")
+                    local Q3M6Y = T7H2K and T7H2K:FindFirstChild("Humanoid")
+                    local A4N2P = false
+                    if not C5P9R or (Q3M6Y and Q3M6Y.Sit) or (C5P9R.Velocity.Magnitude > B7C4T.W6T3R) then
+                        A4N2P = true
+                    end
+                    if A4N2P then
+                        Q1T5R[N2F6Y] = nil
+                        T3N8J = (T3N8J % #K9F6V) + 1
+                        G7P4L = K9F6V[T3N8J]
+                        T7H2K = G7P4L and G7P4L.Character
+                        C5P9R = T7H2K and T7H2K:FindFirstChild("HumanoidRootPart")
+                        if C5P9R then
+                            S9C4F, T2R7J = C5P9R.Position, C5P9R.CFrame
+                            Q1T5R[N2F6Y] = tick()
+                        end
+                    end
+                    if C5P9R and not A4N2P then
+                        if not Q1T5R[N2F6Y] then Q1T5R[N2F6Y] = tick() end
+                        if tick() - (Q1T5R[N2F6Y] or 0) <= B7C4T.U4A7D then
+                            local W9V3K, F4J8T = C5P9R.Velocity, C5P9R.Position
+                            if not S7M2P[G7P4L] then S7M2P[G7P4L] = {} end
+                            local L6N5R = S7M2P[G7P4L]
+                            table.insert(L6N5R, {Position = F4J8T, Velocity = W9V3K, Time = tick()})
+                            if #L6N5R > B7C4T.P5J2F then table.remove(L6N5R, 1) end
+                            local A3K7P, B8T4N = F4J8T, Vector3.new(0, 0, 0)
+                            if #L6N5R >= 2 then
+                                local N7C2F, M4P9J = 0, 0
+                                for V5T3L=2, #L6N5R do
+                                    local Q2R6Y, H1F8N = L6N5R[V5T3L].Position - L6N5R[V5T3L-1].Position, L6N5R[V5T3L].Time - L6N5R[V5T3L-1].Time
+                                    if H1F8N > 0 and Q2R6Y.Magnitude > 0 then
+                                        local J3W5P, S8K4T = Q2R6Y.Magnitude / H1F8N, math.min(1, H1F8N / B7C4T.M1W7T)
+                                        N7C2F, M4P9J = N7C2F + (J3W5P / Q2R6Y.Magnitude) * S8K4T, M4P9J + S8K4T
+                                    end
+                                end
+                                if M4P9J > 0 then B8T4N = Vector3.new(0, (N7C2F/M4P9J) * B7C4T.N6C8A, 0) end
+                            end
+                            local C7P2S, R9N6F = math.random(B7C4T.D4K9Q, B7C4T.G3Y5V), math.random(B7C4T.A2T6R, B7C4T.B7H3N)
+                            local T4M8J, Y6W3P = math.random(B7C4T.X4P8F, B7C4T.S6Q2J) / 10, math.random(B7C4T.R1M9D, B7C4T.V8W3L) / 10
+                            local D2F5N = (W9V3K.Magnitude > 0) and (W9V3K.Unit * math.sin(tick() * T4M8J) * B7C4T.I5N2G * C7P2S) or Vector3.new()
+                            A3K7P = F4J8T + W9V3K * B7C4T.K7R1B + (B8T4N * B7C4T.K7R1B)
+                            S9C4F = A3K7P + Vector3.new(0, math.sin(tick()*Y6W3P)*B7C4T.L8H4P*C7P2S, 0) + D2F5N
+                            if (S9C4F - F4J8T).Magnitude > B7C4T.C5T7Y then S9C4F = F4J8T + (S9C4F - F4J8T).Unit * B7C4T.C5T7Y end
+                            T2R7J = C5P9R.CFrame
+                            J5F8N = B7C4T.Z1P8N
+                        else
+                            Q1T5R[N2F6Y] = nil
+                            T3N8J = (T3N8J % #K9F6V) + 1
+                        end
+                    end
+                end
+                
+                if not Y4C7N then
+                    S9C4F = N2F6Y.Position
+                end
+
+                pcall(function() B1A2C_Control.WorldPosition = S9C4F; P6W2R.CFrame = T2R7J end)
+                
+                if J5F8N > 0 then
+                    local C3T9R = N2F6Y:FindFirstChildOfClass("BodyAngularVelocity")
+                    if not C3T9R then
+                        C3T9R = Instance.new("BodyAngularVelocity", N2F6Y)
+                        C3T9R.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+                        if not table.find(X5V2L, C3T9R) then table.insert(X5V2L, C3T9R) end
+                    end
+                    C3T9R.AngularVelocity = Vector3.new(J5F8N, J5F8N, J5F8N)
+                else
+                    local C3T9R = N2F6Y:FindFirstChildOfClass("BodyAngularVelocity")
+                    if C3T9R then
+                        for V5T3L, S8K4T in ipairs(X5V2L) do if S8K4T == C3T9R then table.remove(X5V2L, V5T3L) break end end
+                        C3T9R:Destroy()
+                    end
+                end
+            end
+        end
+    end
+    J9L5Q.Stepped:Connect(function()
+        for _, D4R8Y in pairs(P4K7N:GetPlayers()) do
+            if D4R8Y ~= F6N3X and D4R8Y.Character then
+                for _, B3N6T in pairs(D4R8Y.Character:GetDescendants()) do
+                    if B3N6T:IsA("BasePart") then pcall(function() B3N6T.CanCollide = false end) end
+                end
+            end
+        end
+    end)
+    A2T6M = J9L5Q.RenderStepped:Connect(function()
+        if not R8P3Q or not R8P3Q.Parent then if A2T6M then A2T6M:Disconnect() end K9R4T() return end
+        if B7C4T.X5R9S and (Y2J8V.CameraType ~= B7C4T.Z4M6C or Y2J8V.CameraSubject ~= R8P3Q) then Y2J8V.CameraType = B7C4T.Z4M6C; Y2J8V.CameraSubject = R8P3Q end
+        A4N7P()
+    end)
+    return A2T6M, F8N3P, Q4G7Y, X5V2L, Z8D9A
+end
+
+local function Q7J3N()
+    T2M7P()
+    local W5F8R = J2F5G()
+    local P9T6K, C3M4Q = A9F3J()
+    local A1K7V, S6J2N = N6W8G()
+    C4T9L(S6J2N, "Creating Part to control hats", 1, 3)
+    local H8V5F
+    D7K5R, H8V5F = P3H6R()
+    S9W4J = G7Q2N(D7K5R, H8V5F, C3M4Q)
+    wait(B7C4T.S3J6F)
+    if replicatesignal then replicatesignal(F6N3X.ConnectDiedSignalBackend) end
+    wait(B7C4T.B4W9T)
+    C4T9L(S6J2N, "Dropping hats", 2, 3)
+    local Y3N7P, M2F4K, T8W6J = F5N9K(P9T6K, C3M4Q, D7K5R)
+    if not Y3N7P then
+        E4L7X.Z9T2M("Couldn't drop hats, respawn and re-execute", 5)
+        K9R4T()
+        return
+    end
+    A5N7J(D7K5R)
+    C4T9L(S6J2N, "Creating GUI and reanimating hats", 3, 3)
+    local N4C7R, G2T5P = pcall(function()
+        A2T6M, F8N3P, Q4G7Y, X5V2L, Z8D9A = M6T9F(P9T6K, T8W6J)
+        local R5J9F, Q1K3N = L8F6M()
+    end)
+    if not N4C7R then
+        warn("Error starting main loop:", G2T5P)
+        K9R4T()
+    end
+    if A1K7V then A1K7V:Destroy() end
+    if W5F8R then
+        local H9T3P = F6N3X.PlayerGui:WaitForChild("L5N7Q", 5)
+        if H9T3P then W5F8R:Destroy() end
+    end
+    for _, B3N6T in pairs(M2F4K) do
+        if B3N6T:FindFirstChild("Handle") and B3N6T.Handle.CanCollide then
+            spawn(function()
+                for V6J4Z = 1, B7C4T.F4L9J do
+                    B3N6T.Handle.CFrame = T8W6J
+                    B3N6T.Handle.Velocity = Vector3.new(0, B7C4T.O6V2M, 0)
+                    task.wait()
+                end
+            end)
+        end
+    end
+    game.StarterGui:SetCore("SendNotification", {
+        Title = "Credits";
+        Text = "ShownApe: Hat Drop, Anthonyisnthere: PermaDeath, Infinite Yield, GrokAI";
+        Duration = 13;
+    })
+end
+
+U6R4N = J9L5Q.Heartbeat:Connect(function()
+    if G8Q4X and Y4C7N and not W2T9F then
+        M1C9T = {}
+        for _, L2P7V in ipairs(N6P8V) do
+            local Q5N3K = L2P7V:FindFirstChild("Handle")
+            if Q5N3K and Q5N3K.Parent then
+                M1C9T[Q5N3K] = Q5N3K.Velocity
+                local C7F2T = B7C4T.Q3F8W
+                Q5N3K.Velocity = Q5N3K.Velocity * C7F2T + Vector3.new(0, C7F2T, 0)
+            end
+        end
+    end
+end)
+
+O7P5Q = J9L5Q.RenderStepped:Connect(function()
+    if G8Q4X and Y4C7N and not W2T9F then
+        for Q5N3K, W9V3K in pairs(M1C9T) do
+            if Q5N3K and Q5N3K.Parent then
+                Q5N3K.Velocity = W9V3K
+            end
+        end
+    end
+end)
+
+I2K9W = J9L5Q.Stepped:Connect(function()
+    if G8Q4X and Y4C7N and not W2T9F then
+        for _, L2P7V in ipairs(N6P8V) do
+            local Q5N3K = L2P7V:FindFirstChild("Handle")
+            if Q5N3K and Q5N3K.Parent then
+                Q5N3K.Velocity = Q5N3K.Velocity + Vector3.new(0, T3J8F, 0)
+            end
+        end
+        T3J8F = -T3J8F
+    end
+end)
+
+Q7J3N()
