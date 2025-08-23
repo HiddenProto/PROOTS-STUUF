@@ -1,0 +1,161 @@
+--!strict
+
+-- This is a LocalScript that should be placed in the StarterPlayerScripts folder.
+-- It displays various game and player stats in an info panel.
+
+-- Services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+-- Local Player and GUI references
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local character = player.Character or player.CharacterAdded:Wait()
+
+-- Create the main ScreenGui
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "InfoGui"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
+
+-- Create the main info panel
+local infoPanel = Instance.new("Frame")
+infoPanel.Name = "InfoPanel"
+infoPanel.Size = UDim2.new(0, 350, 0, 275)
+infoPanel.Position = UDim2.new(0.5, -175, 0.5, -137.5)
+infoPanel.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+infoPanel.BorderSizePixel = 0
+infoPanel.Visible = true
+infoPanel.Parent = screenGui
+
+-- Add rounded corners
+local uicorner = Instance.new("UICorner")
+uicorner.CornerRadius = UDim.new(0, 8)
+uicorner.Parent = infoPanel
+
+-- Create the top title bar
+local titleBar = Instance.new("Frame")
+titleBar.Name = "TitleBar"
+titleBar.Size = UDim2.new(1, 0, 0, 40)
+titleBar.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+titleBar.Parent = infoPanel
+
+-- Add the title text
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Name = "TitleLabel"
+titleLabel.Size = UDim2.new(1, -50, 1, 0)
+titleLabel.Position = UDim2.new(0, 25, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "Info"
+titleLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+titleLabel.TextSize = 18
+titleLabel.Font = Enum.Font.Code
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = titleBar
+
+-- Add an 'X' button to close the panel
+local closeButton = Instance.new("TextButton")
+closeButton.Name = "CloseButton"
+closeButton.Size = UDim2.new(0, 30, 0, 30)
+closeButton.AnchorPoint = Vector2.new(1, 0)
+closeButton.Position = UDim2.new(1, -5, 0, 5)
+closeButton.BackgroundColor3 = Color3.fromRGB(200, 0, 0)
+closeButton.Text = "X"
+closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeButton.TextSize = 20
+closeButton.Font = Enum.Font.Code
+closeButton.Parent = titleBar
+
+-- Create a frame to hold the content
+local contentFrame = Instance.new("Frame")
+contentFrame.Name = "ContentFrame"
+contentFrame.Size = UDim2.new(1, 0, 1, -40)
+contentFrame.Position = UDim2.new(0, 0, 0, 40)
+contentFrame.BackgroundTransparency = 1
+contentFrame.Parent = infoPanel
+
+-- Create a UIListLayout to organize the labels
+local listLayout = Instance.new("UIListLayout")
+listLayout.Name = "InfoLayout"
+listLayout.Padding = UDim.new(0, 5)
+listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+listLayout.Parent = contentFrame
+
+-- Create a function to make info labels
+local function createInfoLabel(name, initialText)
+    local label = Instance.new("TextLabel")
+    label.Name = name
+    label.Size = UDim2.new(1, -20, 0, 25)
+    label.BackgroundTransparency = 1
+    label.Text = initialText or "Loading..."
+    label.TextColor3 = Color3.fromRGB(200, 200, 200)
+    label.TextSize = 14
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Font = Enum.Font.Code
+    label.LayoutOrder = listLayout:GetChildren() and #listLayout:GetChildren() + 1 or 1
+    label.Parent = contentFrame
+    return label
+end
+
+-- Create info labels for each piece of data
+local userLabel = createInfoLabel("UserLabel")
+local pingLabel = createInfoLabel("PingLabel")
+local bodyTypeLabel = createInfoLabel("BodyTypeLabel")
+local gameTimeLabel = createInfoLabel("GameTimeLabel")
+local playerCountLabel = createInfoLabel("PlayerCountLabel")
+local playerCapacityLabel = createInfoLabel("PlayerCapacityLabel")
+
+-- Function to update the info labels
+local function updateInfo()
+    -- Get user data
+    userLabel.Text = "User: " .. player.DisplayName .. " - (" .. player.Name .. ")"
+    
+    -- Get ping
+    local ping = math.floor(player:GetNetworkPing() * 1000)
+    pingLabel.Text = "Ping: " .. tostring(ping) .. "ms"
+
+    -- Determine body type based on all players in the game
+    local isR6Present = false
+    local isR15Present = false
+    local playersInGame = Players:GetPlayers()
+    for _, otherPlayer in ipairs(playersInGame) do
+        local otherCharacter = otherPlayer.Character
+        if otherCharacter then
+            if otherCharacter:FindFirstChild("RightUpperArm") then
+                isR15Present = true
+            elseif otherCharacter:FindFirstChild("Torso") and not otherCharacter:FindFirstChild("RightUpperArm") then
+                isR6Present = true
+            end
+        end
+    end
+
+    if isR6Present and isR15Present then
+        bodyTypeLabel.Text = "Body Type: FREERANGE"
+    elseif isR6Present then
+        bodyTypeLabel.Text = "Body Type: R6 Only"
+    elseif isR15Present then
+        bodyTypeLabel.Text = "Body Type: R15 Only"
+    else
+        bodyTypeLabel.Text = "Body Type: N/A"
+    end
+    
+    -- Get game time
+    local totalTime = game.Lighting.ClockTime
+    local hours = math.floor(totalTime)
+    local minutes = math.floor((totalTime - hours) * 60)
+    local seconds = math.floor(((totalTime - hours) * 60 - minutes) * 60)
+    gameTimeLabel.Text = string.format("Game Time: %02d:%02d:%02d", hours, minutes, seconds)
+    
+    -- Get player count and capacity
+    playerCountLabel.Text = "PLR COUNT: " .. tostring(#Players:GetPlayers())
+    playerCapacityLabel.Text = "PLR CAPACITY: " .. tostring(Players.MaxPlayers)
+end
+
+-- Update the info every second
+RunService.Heartbeat:Connect(updateInfo)
+
+-- Close panel with the 'X' button
+closeButton.MouseButton1Click:Connect(function()
+    infoPanel.Visible = false
+end)
