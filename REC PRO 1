@@ -1,0 +1,1741 @@
+-- LocalScript for Roblox R6 Animation Recorder
+-- Place in StarterPlayerScripts
+
+local player = game.Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+
+-- Check if character is R6
+local function isR6(char)
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    return humanoid and humanoid.RigType == Enum.HumanoidRigType.R6
+end
+
+if not isR6(character) then
+    warn("This script requires an R6 character. Current character is not R6.")
+    return
+end
+
+-- Possible file paths for Delta on iPad
+local POSSIBLE_SAVE_PATHS = {
+    "animations.json",
+    "Animations.json",
+    "workspace/animations.json",
+    "Workspace/animations.json",
+    "delta/workspace/animations.json",
+    "Delta/workspace/animations.json",
+    "delta/Delta/workspace/animations.json",
+    "Delta/Delta/Workspace/animations.json",
+    "Delta/Delta/workspace/animations.json",
+    "Delta/Workspace/animations.json",
+    "delta/Delta/Animations/animations.json",
+    "Delta/Delta/Animations/animations.json",
+    "Delta/animations.json",
+    "delta/animations.json"
+}
+
+-- Initialize animations table
+local animations = {}
+local animCount = 0
+local usedSavePath = nil  -- To track which path works
+local debugMode = true  -- Enable for detailed JSON logging
+
+-- Function to get Motor6D joints
+local function getMotors(char)
+    local motors = {}
+    if char then
+        for _, joint in ipairs(char:GetDescendants()) do
+            if joint:IsA("Motor6D") then
+                motors[joint.Name] = joint
+            end
+        end
+    end
+    return motors
+end
+
+local motors = getMotors(character)
+
+-- Function to disable Animator
+local function disableAnimator()
+    if character and humanoid then
+        local animateScript = character:FindFirstChild("Animate")
+        local animator = humanoid:FindFirstChildOfClass("Animator")
+        if animateScript then
+            animateScript.Disabled = true
+        end
+        if animator then
+            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                track:Stop()
+            end
+            animator:Destroy()
+        end
+        print("Animator disabled")
+    else
+        warn("Cannot disable Animator: character or humanoid missing")
+    end
+end
+
+-- Function to enable Animator
+local function enableAnimator()
+    if character and humanoid then
+        local animateScript = character:FindFirstChild("Animate")
+        if animateScript then
+            animateScript.Disabled = false
+        end
+        if not humanoid:FindFirstChildOfClass("Animator") then
+            local newAnimator = Instance.new("Animator")
+            newAnimator.Parent = humanoid
+            task.wait(0.1)  -- Small delay to ensure creation
+        end
+        print("Animator enabled")
+    else
+        warn("Cannot enable Animator: character or humanoid missing")
+    end
+end
+
+-- Function to list files in a directory (for debugging)
+local function listFilesInDirectory(dir)
+    if listfiles then
+        local success, files = pcall(listfiles, dir)
+        if success then
+            print("Files in " .. dir .. ":")
+            for _, file in ipairs(files) do
+                print(" - " .. file)
+            end
+        else
+            warn("Failed to list files in " .. dir .. ": " .. (files or "Unknown error"))
+        end
+    else
+        warn("Executor does not support listfiles")
+    end
+end
+
+-- Function to save animations to file
+local function saveAnimationsToFile(path)
+    path = path or usedSavePath
+    print("Attempting to save animations...")
+    if not animations then
+        warn("Animations table is nil, initializing as empty table")
+        animations = {}
+    end
+    local state = {}
+    for _, anim in ipairs(animations) do
+        local animData = {name = anim.name, frames = {}}
+        for _, frame in ipairs(anim.frames) do
+            local frameData = {time = frame.time, poses = {}}
+            for name, cf in pairs(frame.poses) do
+                frameData.poses[name] = {cf:components()}
+            end
+            if moveAnimate then
+                frameData.deltaPosition = {frame.deltaPosition.X, frame.deltaPosition.Y, frame.deltaPosition.Z}
+                frameData.rotation = {frame.rotation:components()}
+            end
+            table.insert(animData.frames, frameData)
+        end
+        table.insert(state, animData)
+    end
+    local success, json = pcall(function()
+        return HttpService:JSONEncode(state)
+    end)
+    if success then
+        if writefile then
+            local saved = false
+            if path then
+                print("Attempting to save to specified path: " .. path)
+                local saveSuccess, err = pcall(writefile, path, json)
+                if saveSuccess then
+                    print("Saved successfully to " .. path)
+                    usedSavePath = path
+                    saved = true
+                else
+                    warn("Failed to save to " .. path .. ": " .. (err or "Unknown error"))
+                end
+            end
+            if not saved then
+                for _, tryPath in ipairs(POSSIBLE_SAVE_PATHS) do
+                    print("Attempting to save to " .. tryPath)
+                    local saveSuccess, err = pcall(writefile, tryPath, json)
+                    if saveSuccess then
+                        print("Saved successfully to " .. tryPath)
+                        usedSavePath = tryPath
+                        saved = true
+                        break
+                    else
+                        warn("Failed to save to " .. tryPath .. ": " .. (err or "Unknown error"))
+                    end
+                end
+            end
+            if not saved then
+                warn("Failed to save animations to any path. Check executor file permissions.")
+            end
+        else
+            warn("Executor does not support writefile. Cannot save animations.")
+        end
+    else
+        warn("Failed to encode animations to JSON: " .. json)
+    end
+end
+
+-- Function to load animations from file
+local function loadAnimationsFromFile(path)
+    local function tryLoad(filePath)
+        print("Checking for save file at " .. filePath)
+        if isfile and isfile(filePath) then
+            print("Save file found: " .. filePath .. ". Attempting to load...")
+            local readSuccess, json = pcall(readfile, filePath)
+            if readSuccess then
+                local decodeSuccess, loadedData = pcall(function()
+                    return HttpService:JSONDecode(json)
+                end)
+                if decodeSuccess and type(loadedData) == "table" then
+                    animations = {}
+                    animCount = 0
+                    local loadValid = true
+                    for _, animData in ipairs(loadedData) do
+                        local frames = {}
+                        for _, frameData in ipairs(animData.frames or {}) do
+                            if not frameData.time or not frameData.poses then
+                                loadValid = false
+                                break
+                            end
+                            local poses = {}
+                            for name, components in pairs(frameData.poses or {}) do
+                                if type(components) == "table" and #components == 12 then
+                                    poses[name] = CFrame.new(table.unpack(components))
+                                else
+                                    loadValid = false
+                                    break
+                                end
+                            end
+                            if not loadValid then break end
+                            local frame = {time = frameData.time, poses = poses}
+                            if moveAnimate then
+                                frame.deltaPosition = Vector3.new(table.unpack(frameData.deltaPosition or {0, 0, 0}))
+                                frame.rotation = CFrame.new(table.unpack(frameData.rotation or {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1}))
+                            end
+                            table.insert(frames, frame)
+                        end
+                        if loadValid then
+                            local newAnim = {name = animData.name or "Anim " .. (animCount + 1), frames = frames}
+                            table.insert(animations, newAnim)
+                            animCount = animCount + 1
+                        else
+                            warn("Invalid frame data in loaded animation from " .. filePath)
+                            break
+                        end
+                    end
+                    if loadValid then
+                        print("Animations loaded successfully from " .. filePath .. " (" .. animCount .. " animations)")
+                        usedSavePath = filePath
+                        return true
+                    else
+                        warn("Failed to load some animations due to invalid data")
+                    end
+                else
+                    warn("Failed to decode saved animations JSON from " .. filePath .. ": " .. (decodeSuccess and "Invalid format" or loadedData))
+                end
+            else
+                warn("Failed to read file from " .. filePath .. ": " .. json)
+            end
+        else
+            print("No save file found at " .. filePath)
+        end
+        return false
+    end
+
+    if isfile and readfile then
+        if path then
+            return tryLoad(path)
+        else
+            for _, tryPath in ipairs(POSSIBLE_SAVE_PATHS) do
+                if tryLoad(tryPath) then
+                    return true
+                end
+            end
+            print("No save file found at any path. Starting with empty animations.")
+        end
+    else
+        if not isfile then
+            warn("Executor does not support isfile. Cannot check for save file.")
+        end
+        if not readfile then
+            warn("Executor does not support readfile. Cannot load animations.")
+        end
+    end
+    animations = animations or {}
+    return false
+end
+
+-- GUI Setup
+local playerGui = player:WaitForChild("PlayerGui", 5)
+if not playerGui then
+    warn("PlayerGui not found, GUI will not display")
+    return
+end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AnimRecGui"
+screenGui.ResetOnSpawn = false
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 600, 0, 300)
+mainFrame.Position = UDim2.new(0.5, -300, 0.5, -150)
+mainFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+mainFrame.Active = true
+mainFrame.Draggable = true
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, -30, 0, 30)
+titleLabel.Position = UDim2.new(0, 0, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "Anim Rec 1.1"
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.TextSize = 20
+titleLabel.Font = Enum.Font.SourceSansBold
+titleLabel.Parent = mainFrame
+
+local closeButton = Instance.new("TextButton")
+closeButton.Size = UDim2.new(0, 30, 0, 30)
+closeButton.Position = UDim2.new(1, -30, 0, 0)
+closeButton.BackgroundTransparency = 1
+closeButton.Text = "X"
+closeButton.TextColor3 = Color3.fromRGB(255, 0, 0)
+closeButton.TextSize = 20
+closeButton.Font = Enum.Font.SourceSansBold
+closeButton.Parent = mainFrame
+closeButton.Activated:Connect(function()
+    screenGui:Destroy()
+    enableAnimator()
+    saveAnimationsToFile()
+end)
+
+-- Tabs
+local tabFrame = Instance.new("Frame")
+tabFrame.Size = UDim2.new(1, 0, 0, 30)
+tabFrame.Position = UDim2.new(0, 0, 0, 30)
+tabFrame.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+tabFrame.Parent = mainFrame
+
+local recordTabButton = Instance.new("TextButton")
+recordTabButton.Size = UDim2.new(0.25, 0, 1, 0)
+recordTabButton.Position = UDim2.new(0, 0, 0, 0)
+recordTabButton.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+recordTabButton.Text = "Record/Playback"
+recordTabButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+recordTabButton.Parent = tabFrame
+
+local saveTabButton = Instance.new("TextButton")
+saveTabButton.Size = UDim2.new(0.25, 0, 1, 0)
+saveTabButton.Position = UDim2.new(0.25, 0, 0, 0)
+saveTabButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+saveTabButton.Text = "Save"
+saveTabButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+saveTabButton.Parent = tabFrame
+
+local extrasTabButton = Instance.new("TextButton")
+extrasTabButton.Size = UDim2.new(0.25, 0, 1, 0)
+extrasTabButton.Position = UDim2.new(0.5, 0, 0, 0)
+extrasTabButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+extrasTabButton.Text = "Extras"
+extrasTabButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+extrasTabButton.Parent = tabFrame
+
+local settingsTabButton = Instance.new("TextButton")
+settingsTabButton.Size = UDim2.new(0.25, 0, 1, 0)
+settingsTabButton.Position = UDim2.new(0.75, 0, 0, 0)
+settingsTabButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+settingsTabButton.Text = "Settings"
+settingsTabButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+settingsTabButton.Parent = tabFrame
+
+local recordFrame = Instance.new("Frame")
+recordFrame.Size = UDim2.new(1, 0, 1, -60)
+recordFrame.Position = UDim2.new(0, 0, 0, 60)
+recordFrame.BackgroundTransparency = 1
+recordFrame.Parent = mainFrame
+recordFrame.Visible = true
+
+local saveFrame = Instance.new("Frame")
+saveFrame.Size = UDim2.new(1, 0, 1, -60)
+saveFrame.Position = UDim2.new(0, 0, 0, 60)
+saveFrame.BackgroundTransparency = 1
+saveFrame.Parent = mainFrame
+saveFrame.Visible = false
+
+local extrasFrame = Instance.new("Frame")
+extrasFrame.Size = UDim2.new(1, 0, 1, -60)
+extrasFrame.Position = UDim2.new(0, 0, 0, 60)
+extrasFrame.BackgroundTransparency = 1
+extrasFrame.Parent = mainFrame
+extrasFrame.Visible = false
+
+local settingsFrame = Instance.new("Frame")
+settingsFrame.Size = UDim2.new(1, 0, 1, -60)
+settingsFrame.Position = UDim2.new(0, 0, 0, 60)
+settingsFrame.BackgroundTransparency = 1
+settingsFrame.Parent = mainFrame
+settingsFrame.Visible = false
+
+-- Tab switching
+local function setTabVisible(tab)
+    recordFrame.Visible = (tab == "record")
+    saveFrame.Visible = (tab == "save")
+    extrasFrame.Visible = (tab == "extras")
+    settingsFrame.Visible = (tab == "settings")
+    recordTabButton.BackgroundColor3 = (tab == "record") and Color3.fromRGB(100, 100, 100) or Color3.fromRGB(70, 70, 70)
+    saveTabButton.BackgroundColor3 = (tab == "save") and Color3.fromRGB(100, 100, 100) or Color3.fromRGB(70, 70, 70)
+    extrasTabButton.BackgroundColor3 = (tab == "extras") and Color3.fromRGB(100, 100, 100) or Color3.fromRGB(70, 70, 70)
+    settingsTabButton.BackgroundColor3 = (tab == "settings") and Color3.fromRGB(100, 100, 100) or Color3.fromRGB(70, 70, 70)
+end
+
+recordTabButton.Activated:Connect(function() setTabVisible("record") end)
+saveTabButton.Activated:Connect(function() setTabVisible("save") end)
+extrasTabButton.Activated:Connect(function() setTabVisible("extras") end)
+settingsTabButton.Activated:Connect(function() setTabVisible("settings") end)
+
+-- Record/Playback layout
+local leftRecordFrame = Instance.new("Frame")
+leftRecordFrame.Size = UDim2.new(0.5, 0, 1, 0)
+leftRecordFrame.Position = UDim2.new(0, 0, 0, 0)
+leftRecordFrame.BackgroundTransparency = 1
+leftRecordFrame.Parent = recordFrame
+
+local rightRecordFrame = Instance.new("Frame")
+rightRecordFrame.Size = UDim2.new(0.5, 0, 1, 0)
+rightRecordFrame.Position = UDim2.new(0.5, 0, 0, 0)
+rightRecordFrame.BackgroundTransparency = 1
+rightRecordFrame.Parent = recordFrame
+
+-- Record Button
+local recordButton = Instance.new("TextButton")
+recordButton.Size = UDim2.new(1, 0, 0, 50)
+recordButton.Position = UDim2.new(0, 0, 0, 0)
+recordButton.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
+recordButton.Text = "▸"
+recordButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+recordButton.TextSize = 30
+recordButton.Parent = leftRecordFrame
+
+-- Anim List
+local animList = Instance.new("ScrollingFrame")
+animList.Size = UDim2.new(1, 0, 1, -50)
+animList.Position = UDim2.new(0, 0, 0, 50)
+animList.BackgroundTransparency = 1
+animList.CanvasSize = UDim2.new(0, 0, 0, 0)
+animList.ScrollBarThickness = 6
+animList.Parent = leftRecordFrame
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout.Parent = animList
+
+-- Playback Controls
+local controlFrame = Instance.new("Frame")
+controlFrame.Size = UDim2.new(1, 0, 0, 30)
+controlFrame.Position = UDim2.new(0, 0, 0, 0)
+controlFrame.BackgroundTransparency = 1
+controlFrame.Parent = rightRecordFrame
+
+local replayButton = Instance.new("TextButton")
+replayButton.Size = UDim2.new(0.2, 0, 0, 30)
+replayButton.Position = UDim2.new(0, 0, 0, 0)
+replayButton.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+replayButton.Text = "Replay"
+replayButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+replayButton.Parent = controlFrame
+
+local pauseButton = Instance.new("TextButton")
+pauseButton.Size = UDim2.new(0.2, 0, 0, 30)
+pauseButton.Position = UDim2.new(0.2, 0, 0, 0)
+pauseButton.BackgroundColor3 = Color3.fromRGB(255, 165, 0)
+pauseButton.Text = "Pause"
+pauseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+pauseButton.Parent = controlFrame
+
+local resetButton = Instance.new("TextButton")
+resetButton.Size = UDim2.new(0.2, 0, 0, 30)
+resetButton.Position = UDim2.new(0.4, 0, 0, 0)
+resetButton.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+resetButton.Text = "Reset"
+resetButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+resetButton.Parent = controlFrame
+
+local loopButton = Instance.new("TextButton")
+loopButton.Size = UDim2.new(0.2, 0, 0, 30)
+loopButton.Position = UDim2.new(0.6, 0, 0, 0)
+loopButton.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+loopButton.Text = "Loop: OFF"
+loopButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+loopButton.Parent = controlFrame
+
+local backButton = Instance.new("TextButton")
+backButton.Size = UDim2.new(0.1, 0, 0, 30)
+backButton.Position = UDim2.new(0.8, 0, 0, 0)
+backButton.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
+backButton.Text = "<"
+backButton.TextColor3 = Color3.fromRGB(0, 0, 0)
+backButton.Parent = controlFrame
+
+local forwardButton = Instance.new("TextButton")
+forwardButton.Size = UDim2.new(0.1, 0, 0, 30)
+forwardButton.Position = UDim2.new(0.9, 0, 0, 0)
+forwardButton.BackgroundColor3 = Color3.fromRGB(255, 255, 0)
+forwardButton.Text = ">"
+forwardButton.TextColor3 = Color3.fromRGB(0, 0, 0)
+forwardButton.Parent = controlFrame
+
+local renameBox = Instance.new("TextBox")
+renameBox.Size = UDim2.new(1, 0, 0, 30)
+renameBox.Position = UDim2.new(0, 0, 0, 0)
+renameBox.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+renameBox.Text = "New Name"
+renameBox.TextColor3 = Color3.fromRGB(0, 0, 0)
+renameBox.TextSize = 18
+renameBox.TextXAlignment = Enum.TextXAlignment.Left
+renameBox.Visible = false
+renameBox.Parent = rightRecordFrame
+
+local speedLabel = Instance.new("TextLabel")
+speedLabel.Size = UDim2.new(0.4, 0, 0, 30)
+speedLabel.Position = UDim2.new(0, 0, 0, 30)
+speedLabel.BackgroundTransparency = 1
+speedLabel.Text = "Speed: 1.0"
+speedLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+speedLabel.Parent = rightRecordFrame
+
+local speedSlider = Instance.new("TextBox")
+speedSlider.Size = UDim2.new(0.4, 0, 0, 30)
+speedSlider.Position = UDim2.new(0, 0, 0, 60)
+speedSlider.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+speedSlider.Text = "1.0"
+speedSlider.Parent = rightRecordFrame
+
+local progressFrame = Instance.new("Frame")
+progressFrame.Size = UDim2.new(1, 0, 0, 20)
+progressFrame.Position = UDim2.new(0, 0, 1, -20)
+progressFrame.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+progressFrame.Parent = rightRecordFrame
+
+local progressLine = Instance.new("Frame")
+progressLine.Size = UDim2.new(1, 0, 0, 2)
+progressLine.Position = UDim2.new(0, 0, 0.5, 0)
+progressLine.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+progressLine.Parent = progressFrame
+
+local progressCircle = Instance.new("Frame")
+progressCircle.Size = UDim2.new(0, 10, 0, 10)
+progressCircle.Position = UDim2.new(0, 0, 0.5, -5)
+progressCircle.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+progressCircle.Parent = progressFrame
+progressCircle.BorderSizePixel = 0
+local uicorner = Instance.new("UICorner")
+uicorner.CornerRadius = UDim.new(1, 0)
+uicorner.Parent = progressCircle
+
+local timestampLabel = Instance.new("TextLabel")
+timestampLabel.Size = UDim2.new(1, 0, 1, 0)
+timestampLabel.BackgroundTransparency = 1
+timestampLabel.Text = "00:00"
+timestampLabel.TextColor3 = Color3.fromRGB(0, 0, 0)
+timestampLabel.TextSize = 14
+timestampLabel.Parent = progressFrame
+
+-- Save Frame Elements
+local saveNoteLabel = Instance.new("TextLabel")
+saveNoteLabel.Size = UDim2.new(1, 0, 0, 40)
+saveNoteLabel.Position = UDim2.new(0, 0, 0, 0)
+saveNoteLabel.BackgroundTransparency = 1
+saveNoteLabel.Text = "Use 'Copy Animation' or 'Save State' to copy to clipboard. Paste into a text editor to save, then paste into the import box below."
+saveNoteLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+saveNoteLabel.TextSize = 14
+saveNoteLabel.TextWrapped = true
+saveNoteLabel.Parent = saveFrame
+
+local filePathLabel = Instance.new("TextLabel")
+filePathLabel.Size = UDim2.new(1, 0, 0, 20)
+filePathLabel.Position = UDim2.new(0, 0, 0, 40)
+filePathLabel.BackgroundTransparency = 1
+filePathLabel.Text = "File Path (optional, e.g., Workspace/animations.json):"
+filePathLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+filePathLabel.Parent = saveFrame
+
+local filePathBox = Instance.new("TextBox")
+filePathBox.Size = UDim2.new(1, 0, 0, 30)
+filePathBox.Position = UDim2.new(0, 0, 0, 60)
+filePathBox.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+filePathBox.PlaceholderText = "Enter file path or leave empty for default"
+filePathBox.Text = ""
+filePathBox.TextColor3 = Color3.fromRGB(0, 0, 0)
+filePathBox.TextSize = 14
+filePathBox.Parent = saveFrame
+
+local importLabel = Instance.new("TextLabel")
+importLabel.Size = UDim2.new(1, 0, 0, 20)
+importLabel.Position = UDim2.new(0, 0, 0, 90)
+importLabel.BackgroundTransparency = 1
+importLabel.Text = "Import JSON:"
+importLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+importLabel.Parent = saveFrame
+
+local importBox = Instance.new("TextBox")
+importBox.Size = UDim2.new(1, 0, 0, 80)
+importBox.Position = UDim2.new(0, 0, 0, 110)
+importBox.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+importBox.PlaceholderText = "Paste JSON data here"
+importBox.TextEditable = true
+importBox.TextWrapped = true
+importBox.TextScaled = false
+importBox.TextSize = 14
+importBox.MultiLine = true
+importBox.Parent = saveFrame
+
+local copyAnimButton = Instance.new("TextButton")
+copyAnimButton.Size = UDim2.new(0.3, 0, 0, 30)
+copyAnimButton.Position = UDim2.new(0, 0, 0, 190)
+copyAnimButton.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+copyAnimButton.Text = "Copy Animation"
+copyAnimButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+copyAnimButton.Parent = saveFrame
+
+local saveStateButton = Instance.new("TextButton")
+saveStateButton.Size = UDim2.new(0.3, 0, 0, 30)
+saveStateButton.Position = UDim2.new(0.3, 0, 0, 190)
+saveStateButton.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+saveStateButton.Text = "Save State"
+saveStateButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+saveStateButton.Parent = saveFrame
+
+local loadFileButton = Instance.new("TextButton")
+loadFileButton.Size = UDim2.new(0.3, 0, 0, 30)
+loadFileButton.Position = UDim2.new(0.6, 0, 0, 190)
+loadFileButton.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
+loadFileButton.Text = "Load File"
+loadFileButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+loadFileButton.Parent = saveFrame
+
+-- Extras Tab Elements
+local leftExtrasFrame = Instance.new("Frame")
+leftExtrasFrame.Size = UDim2.new(0.5, 0, 1, 0)
+leftExtrasFrame.Position = UDim2.new(0, 0, 0, 0)
+leftExtrasFrame.BackgroundTransparency = 1
+leftExtrasFrame.Parent = extrasFrame
+
+local rightExtrasFrame = Instance.new("Frame")
+rightExtrasFrame.Size = UDim2.new(0.5, 0, 1, 0)
+rightExtrasFrame.Position = UDim2.new(0.5, 0, 0, 0)
+rightExtrasFrame.BackgroundTransparency = 1
+rightExtrasFrame.Parent = extrasFrame
+
+local playerList = Instance.new("ScrollingFrame")
+playerList.Size = UDim2.new(1, 0, 1, -50)
+playerList.Position = UDim2.new(0, 0, 0, 50)
+playerList.BackgroundTransparency = 1
+playerList.CanvasSize = UDim2.new(0, 0, 0, 0)
+playerList.ScrollBarThickness = 6
+playerList.Parent = leftExtrasFrame
+
+local playerUIListLayout = Instance.new("UIListLayout")
+playerUIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+playerUIListLayout.Parent = playerList
+
+local refreshButton = Instance.new("TextButton")
+refreshButton.Size = UDim2.new(1, 0, 0, 50)
+refreshButton.Position = UDim2.new(0, 0, 0, 0)
+refreshButton.BackgroundColor3 = Color3.fromRGB(255, 165, 0)
+refreshButton.Text = "Refresh Players"
+refreshButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+refreshButton.TextSize = 20
+refreshButton.Parent = leftExtrasFrame
+
+local mirrorButton = Instance.new("TextButton")
+mirrorButton.Size = UDim2.new(1, 0, 0, 50)
+mirrorButton.Position = UDim2.new(0, 0, 0, 0)
+mirrorButton.BackgroundColor3 = Color3.fromRGB(0, 255, 255)
+mirrorButton.Text = "Mirror"
+mirrorButton.TextColor3 = Color3.fromRGB(0, 0, 0)
+mirrorButton.TextSize = 30
+mirrorButton.Parent = rightExtrasFrame
+
+-- Settings Tab Elements
+local moveAnimateToggle = Instance.new("TextButton")
+moveAnimateToggle.Size = UDim2.new(1, 0, 0, 50)
+moveAnimateToggle.Position = UDim2.new(0, 0, 0, 0)
+moveAnimateToggle.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+moveAnimateToggle.Text = "Move Animate: OFF"
+moveAnimateToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+moveAnimateToggle.TextSize = 20
+moveAnimateToggle.Parent = settingsFrame
+
+-- Parent screenGui after all elements are created
+screenGui.Parent = playerGui
+
+-- Settings Logic
+local moveAnimate = false
+local clickDebounce = false
+
+moveAnimateToggle.Activated:Connect(function()
+    if clickDebounce then return end
+    clickDebounce = true
+    moveAnimate = not moveAnimate
+    moveAnimateToggle.Text = "Move Animate: " .. (moveAnimate and "ON" or "OFF")
+    moveAnimateToggle.BackgroundColor3 = moveAnimate and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(100, 100, 100)
+    task.wait(0.2)
+    clickDebounce = false
+end)
+
+-- Logic for Extras
+local selectedTarget = nil
+local mirrorConnection = nil
+
+local function populatePlayers()
+    for _, child in ipairs(playerList:GetChildren()) do
+        if child:IsA("TextButton") then
+            child:Destroy()
+        end
+    end
+    local players = game.Players:GetPlayers()
+    local count = 0
+    for _, p in ipairs(players) do
+        if p ~= player then
+            count = count + 1
+            local pButton = Instance.new("TextButton")
+            pButton.Size = UDim2.new(1, 0, 0, 30)
+            pButton.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+            pButton.Text = p.Name
+            pButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+            pButton.Parent = playerList
+            pButton.Activated:Connect(function()
+                if clickDebounce then return end
+                clickDebounce = true
+                if selectedTarget then
+                    selectedTarget.Button.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+                end
+                selectedTarget = {Player = p, Button = pButton}
+                pButton.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+                task.wait(0.2)
+                clickDebounce = false
+            end)
+        end
+    end
+    playerList.CanvasSize = UDim2.new(0, 0, 0, count * 30)
+end
+
+refreshButton.Activated:Connect(function()
+    if clickDebounce then return end
+    clickDebounce = true
+    populatePlayers()
+    task.wait(0.2)
+    clickDebounce = false
+end)
+populatePlayers()
+
+mirrorButton.Activated:Connect(function()
+    if clickDebounce then return end
+    clickDebounce = true
+    if mirrorConnection then
+        mirrorConnection:Disconnect()
+        mirrorConnection = nil
+        mirrorButton.Text = "Mirror"
+        task.wait(0.1)
+        enableAnimator()
+        print("Mirroring stopped and Animator re-enabled")
+    elseif selectedTarget then
+        local targetPlayer = selectedTarget.Player
+        local targetChar = targetPlayer.Character
+        if targetChar and isR6(targetChar) then
+            disableAnimator()
+            local lastTargetPosition = nil
+            mirrorConnection = RunService.Heartbeat:Connect(function()
+                local targetChar = targetPlayer.Character
+                if targetChar and isR6(targetChar) and character and humanoid then
+                    local targetMotors = getMotors(targetChar)
+                    if next(targetMotors) then
+                        for name, motor in pairs(motors) do
+                            if targetMotors[name] then
+                                motor.Transform = targetMotors[name].Transform
+                            end
+                        end
+                        local rootPart = character:FindFirstChild("HumanoidRootPart")
+                        local targetRootPart = targetChar:FindFirstChild("HumanoidRootPart")
+                        if rootPart and targetRootPart then
+                            rootPart.Anchored = false
+                            if moveAnimate then
+                                local currentTargetPosition = targetRootPart.Position
+                                local currentTargetRotation = targetRootPart.CFrame - targetRootPart.Position
+                                if lastTargetPosition then
+                                    local delta = currentTargetPosition - lastTargetPosition
+                                    rootPart.CFrame = CFrame.new(rootPart.Position + delta) * currentTargetRotation
+                                end
+                                lastTargetPosition = currentTargetPosition
+                            end
+                        end
+                    else
+                        warn("No valid Motor6D joints found for target character")
+                        mirrorConnection:Disconnect()
+                        mirrorConnection = nil
+                        mirrorButton.Text = "Mirror"
+                        task.wait(0.1)
+                        enableAnimator()
+                    end
+                else
+                    warn("Target character not found or not R6")
+                    mirrorConnection:Disconnect()
+                    mirrorConnection = nil
+                    mirrorButton.Text = "Mirror"
+                    task.wait(0.1)
+                    enableAnimator()
+                end
+            end)
+            mirrorButton.Text = "Disconnect"
+        else
+            warn("No target character found or target is not R6")
+        end
+    end
+    task.wait(0.2)
+    clickDebounce = false
+end)
+
+-- Record/Playback Logic
+local recording = false
+local selectedAnim = nil
+local playbackSpeed = 1.0
+local playbackConnection = nil
+local recordConnection = nil
+local playStartTime = 0
+local currentPlayTime = 0
+local lastFrameIndex = 1
+local lastRecordedPosition = nil
+local lastPlayPosition = nil
+local isPaused = false
+local loop = false
+local animationDuration = 0
+
+local function getPoses()
+    local poses = {}
+    for name, motor in pairs(motors) do
+        if motor and motor.Transform then
+            poses[name] = motor.Transform
+        end
+    end
+    return poses
+end
+
+local function applyPoses(poses, lerpAlpha, deltaPosition, rotation)
+    if not poses or not character or not humanoid then
+        warn("Cannot apply poses: invalid character, humanoid, or poses")
+        return false
+    end
+    local success = true
+    for name, cf in pairs(poses) do
+        if motors[name] and cf then
+            if lerpAlpha and lerpAlpha < 1 then
+                local current = motors[name].Transform
+                motors[name].Transform = current:Lerp(cf, lerpAlpha)
+            else
+                motors[name].Transform = cf
+            end
+        else
+            warn("Invalid motor or CFrame for " .. name)
+            success = false
+        end
+    end
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if rootPart then
+        rootPart.Anchored = false
+        if moveAnimate and deltaPosition and rotation then
+            local currentPos = rootPart.Position
+            pcall(function()
+                rootPart.CFrame = CFrame.new(currentPos + deltaPosition) * rotation
+            end)
+        end
+    else
+        warn("HumanoidRootPart missing")
+        success = false
+    end
+    return success
+end
+
+local function toSingleLineJSON(frames)
+    local jsonData = {}
+    for _, frame in ipairs(frames) do
+        local frameData = {time = frame.time, poses = {}}
+        for name, cf in pairs(frame.poses) do
+            frameData.poses[name] = {cf:components()}
+        end
+        if moveAnimate then
+            frameData.deltaPosition = {frame.deltaPosition.X, frame.deltaPosition.Y, frame.deltaPosition.Z}
+            frameData.rotation = {frame.rotation:components()}
+        end
+        table.insert(jsonData, frameData)
+    end
+    local success, json = pcall(function()
+        return HttpService:JSONEncode(jsonData)
+    end)
+    if success then
+        return json:gsub("\n", ""):gsub("%s+", " ")
+    else
+        warn("Failed to encode JSON: " .. json)
+        return ""
+    end
+end
+
+local function formatTime(time)
+    local minutes = math.floor(time / 60)
+    local seconds = math.floor(time % 60)
+    return string.format("%02d:%02d", minutes, seconds)
+end
+
+local function updateProgress()
+    if selectedAnim and animationDuration > 0 then
+        local progress = math.clamp(currentPlayTime / animationDuration, 0, 1)
+        progressCircle.Position = UDim2.new(progress, 0, 0.5, -5)
+        timestampLabel.Text = formatTime(currentPlayTime)
+    else
+        progressCircle.Position = UDim2.new(0, 0, 0.5, -5)
+        timestampLabel.Text = "00:00"
+    end
+end
+
+local function selectAnimation(anim, button)
+    if not anim or not button then
+        warn("Invalid animation or button in selectAnimation")
+        return
+    end
+    if playbackConnection then
+        playbackConnection:Disconnect()
+        playbackConnection = nil
+        replayButton.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+        isPaused = false
+        pauseButton.Text = "Pause"
+        enableAnimator()
+    end
+    if selectedAnim and selectedAnim.Button then
+        selectedAnim.Button.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+        if selectedAnim.Tween then
+            selectedAnim.Tween:Cancel()
+            selectedAnim.Tween = nil
+        end
+    end
+    selectedAnim = anim
+    selectedAnim.Button = button
+    button.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+    currentPlayTime = 0
+    lastFrameIndex = 1
+    animationDuration = anim.frames[#anim.frames] and anim.frames[#anim.frames].time or 0
+    updateProgress()
+    -- Test first frame to ensure animation is playable
+    if #anim.frames > 0 then
+        if not applyPoses(anim.frames[1].poses, 1, moveAnimate and anim.frames[1].deltaPosition or nil, moveAnimate and anim.frames[1].rotation or nil) then
+            warn("Selected animation may be invalid; first frame failed to apply")
+        end
+    end
+    local green = Color3.fromRGB(0, 255, 0)
+    local darkGreen = Color3.fromRGB(0, 150, 0)
+    local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1, true)
+    selectedAnim.Tween = TweenService:Create(button, tweenInfo, {BackgroundColor3 = darkGreen})
+    selectedAnim.Tween:Play()
+    controlFrame.Visible = true
+    renameBox.Visible = false
+end
+
+local function createAnimButton(anim)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 0, 30)
+    frame.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    frame.Parent = animList
+
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Size = UDim2.new(0.6, 0, 1, 0)
+    titleLabel.Position = UDim2.new(0, 5, 0, 0)
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Text = anim.name
+    titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    titleLabel.TextSize = 18
+    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    titleLabel.Parent = frame
+
+    local selectButton = Instance.new("TextButton")
+    selectButton.Size = UDim2.new(0.1, 0, 1, 0)
+    selectButton.Position = UDim2.new(0.6, 0, 0, 0)
+    selectButton.BackgroundColor3 = Color3.fromRGB(255, 165, 0)
+    selectButton.Text = ""
+    selectButton.ZIndex = 10
+    selectButton.Parent = frame
+
+    local editButton = Instance.new("TextButton")
+    editButton.Size = UDim2.new(0.1, 0, 1, 0)
+    editButton.Position = UDim2.new(0.7, 0, 0, 0)
+    editButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    editButton.Text = "Edit"
+    editButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    editButton.TextSize = 18
+    editButton.Parent = frame
+
+    local deleteButton = Instance.new("TextButton")
+    deleteButton.Size = UDim2.new(0.1, 0, 1, 0)
+    deleteButton.Position = UDim2.new(0.8, 0, 0, 0)
+    deleteButton.BackgroundTransparency = 1
+    deleteButton.Text = "X"
+    deleteButton.TextColor3 = Color3.fromRGB(255, 0, 0)
+    deleteButton.TextSize = 18
+    deleteButton.Parent = frame
+
+    selectButton.Activated:Connect(function()
+        if clickDebounce then return end
+        clickDebounce = true
+        selectAnimation(anim, frame)
+        task.wait(0.2)
+        clickDebounce = false
+    end)
+
+    editButton.Activated:Connect(function()
+        if clickDebounce then return end
+        clickDebounce = true
+        controlFrame.Visible = false
+        renameBox.Visible = true
+        renameBox.Text = anim.name
+        renameBox:CaptureFocus()
+        task.wait(0.2)
+        clickDebounce = false
+    end)
+
+    renameBox.FocusLost:Connect(function(enterPressed)
+        if clickDebounce then return end
+        clickDebounce = true
+        anim.name = renameBox.Text
+        titleLabel.Text = renameBox.Text
+        controlFrame.Visible = true
+        renameBox.Visible = false
+        saveAnimationsToFile()
+        task.wait(0.2)
+        clickDebounce = false
+    end)
+
+    deleteButton.Activated:Connect(function()
+        if clickDebounce then return end
+        clickDebounce = true
+        if anim.Tween then
+            anim.Tween:Cancel()
+            anim.Tween = nil
+        end
+        for i, a in ipairs(animations) do
+            if a == anim then
+                table.remove(animations, i)
+                break
+            end
+        end
+        frame:Destroy()
+        animList.CanvasSize = UDim2.new(0, 0, 0, (#animations) * 30)
+        if selectedAnim == anim then
+            selectedAnim = nil
+            updateProgress()
+        end
+        saveAnimationsToFile()
+        task.wait(0.2)
+        clickDebounce = false
+    end)
+
+    animList.CanvasSize = UDim2.new(0, 0, 0, (#animations) * 30)
+    return frame
+end
+
+recordButton.Activated:Connect(function()
+    if clickDebounce then return end
+    clickDebounce = true
+    if playbackConnection or mirrorConnection then
+        warn("Cannot record: playback or mirroring active")
+        task.wait(0.2)
+        clickDebounce = false
+        return
+    end
+    recording = not recording
+    if recording then
+        recordButton.Text = "❚❚"
+        local newAnim = {name = "Anim " .. (animCount + 1), frames = {}}
+        table.insert(animations, newAnim)
+        animCount = animCount + 1
+        local startTime = os.clock()
+        local referencePart = character:FindFirstChild("HumanoidRootPart")
+        lastRecordedPosition = referencePart and referencePart.Position or Vector3.new(0, 0, 0)
+        recordConnection = RunService.Heartbeat:Connect(function()
+            if not character or not humanoid then
+                warn("Recording stopped: character or humanoid missing")
+                recordConnection:Disconnect()
+                recordConnection = nil
+                recordButton.Text = "▸"
+                return
+            end
+            local timeStamp = os.clock() - startTime
+            local poses = getPoses()
+            local currentPosition = referencePart and referencePart.Position or Vector3.new(0, 0, 0)
+            local deltaPosition = currentPosition - lastRecordedPosition
+            local rotation = referencePart and (referencePart.CFrame - referencePart.Position) or CFrame.new()
+            if next(poses) then
+                table.insert(newAnim.frames, {time = timeStamp, poses = poses, deltaPosition = deltaPosition, rotation = rotation})
+            end
+            lastRecordedPosition = currentPosition
+        end)
+    else
+        recordButton.Text = "▸"
+        if recordConnection then
+            recordConnection:Disconnect()
+            recordConnection = nil
+        end
+        if #animations > 0 then
+            local newAnim = animations[#animations]
+            if newAnim and #newAnim.frames > 0 then
+                local animButton = createAnimButton(newAnim)
+                newAnim.Button = animButton
+                selectAnimation(newAnim, animButton)
+            else
+                warn("No valid frames recorded for new animation")
+                table.remove(animations, #animations)
+                animCount = animCount - 1
+            end
+        else
+            warn("No animations available")
+        end
+    end
+    task.wait(0.2)
+    clickDebounce = false
+end)
+
+replayButton.Activated:Connect(function()
+    if clickDebounce then return end
+    clickDebounce = true
+    if recording or mirrorConnection or not character or not humanoid then
+        warn("Cannot replay: recording, mirroring, or character missing")
+        task.wait(0.2)
+        clickDebounce = false
+        return
+    end
+    if selectedAnim and #selectedAnim.frames > 0 and not playbackConnection then
+        disableAnimator()
+        replayButton.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+        playStartTime = os.clock()
+        currentPlayTime = 0
+        lastFrameIndex = 1
+        isPaused = false
+        pauseButton.Text = "Pause"
+        local referencePart = character:FindFirstChild("HumanoidRootPart")
+        lastPlayPosition = referencePart and referencePart.Position or Vector3.new(0, 0, 0)
+        animationDuration = selectedAnim.frames[#selectedAnim.frames].time or 0
+        updateProgress()
+        playbackConnection = RunService.Heartbeat:Connect(function(dt)
+            if not character or not humanoid then
+                warn("Playback stopped: character or humanoid missing")
+                playbackConnection:Disconnect()
+                playbackConnection = nil
+                replayButton.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+                isPaused = false
+                pauseButton.Text = "Pause"
+                enableAnimator()
+                updateProgress()
+                return
+            end
+            if not isPaused then
+                currentPlayTime = currentPlayTime + dt * playbackSpeed
+                if currentPlayTime >= animationDuration then
+                    if loop then
+                        currentPlayTime = 0
+                        lastFrameIndex = 1
+                        lastPlayPosition = referencePart and referencePart.Position or Vector3.new(0, 0, 0)
+                        updateProgress()
+                    else
+                        currentPlayTime = animationDuration
+                        playbackConnection:Disconnect()
+                        playbackConnection = nil
+                        replayButton.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+                        isPaused = false
+                        pauseButton.Text = "Pause"
+                        enableAnimator()
+                        updateProgress()
+                        return
+                    end
+                end
+                local found = false
+                for i = 1, #selectedAnim.frames do
+                    local currFrame = selectedAnim.frames[i]
+                    local nextFrame = selectedAnim.frames[i + 1]
+                    if not currFrame or not currFrame.poses then
+                        warn("Invalid frame data at index " .. i)
+                        playbackConnection:Disconnect()
+                        playbackConnection = nil
+                        replayButton.BackgroundColor3 = Color3.fromRGB(0, 255, 0)
+                        isPaused = false
+                        pauseButton.Text = "Pause"
+                        enableAnimator()
+                        updateProgress()
+                        return
+                    end
+                    if i == #selectedAnim.frames then
+                        applyPoses(currFrame.poses, 1, moveAnimate and currFrame.deltaPosition or nil, moveAnimate and currFrame.rotation or nil)
+                        lastFrameIndex = i
+                        found = true
+                        break
+                    elseif nextFrame and currFrame.time <= currentPlayTime and currentPlayTime < nextFrame.time then
+                        local lerpAlpha = (currentPlayTime - currFrame.time) / (nextFrame.time - currFrame.time)
+                        applyPoses(currFrame.poses, lerpAlpha, moveAnimate and currFrame.deltaPosition or nil, moveAnimate and currFrame.rotation or nil)
+                        lastFrameIndex = i
+                        found = true
+                        break
+                    end
+                end
+                if not found and #selectedAnim.frames > 0 then
+                    applyPoses(selectedAnim.frames[#selectedAnim.frames].poses, 1, moveAnimate and selectedAnim.frames[#selectedAnim.frames].deltaPosition or nil, moveAnimate and selectedAnim.frames[#selectedAnim.frames].rotation or nil)
+                    lastFrameIndex = #selectedAnim.frames
+                end
+                updateProgress()
+            end
+        end)
+    else
+        warn("No valid animation selected or empty frames")
+    end
+    task.wait(0.2)
+    clickDebounce = false
+end)
+
+pauseButton.Activated:Connect(function()
+    if clickDebounce then return end
+    clickDebounce = true
+    if playbackConnection then
+        isPaused = not isPaused
+        pauseButton.Text = isPaused and "Resume" or "Pause"
+        updateProgress()
+    end
+    task.wait(0.2)
+    clickDebounce = false
+end)
+
+resetButton.Activated:Connect(function()
+    if clickDebounce then return end
+    clickDebounce = true
+    if selectedAnim then
+        currentPlayTime = 0
+        lastFrameIndex = 1
+        isPaused = true
+        pauseButton.Text = "Resume"
+        local referencePart = character:FindFirstChild("HumanoidRootPart")
+        lastPlayPosition = referencePart and referencePart.Position or Vector3.new(0, 0, 0)
+        if #selectedAnim.frames > 0 then
+            applyPoses(selectedAnim.frames[1].poses, 1, moveAnimate and selectedAnim.frames[1].deltaPosition or nil, moveAnimate and selectedAnim.frames[1].rotation or nil)
+        end
+        updateProgress()
+    end
+    task.wait(0.2)
+    clickDebounce = false
+end)
+
+loopButton.Activated:Connect(function()
+    if clickDebounce then return end
+    clickDebounce = true
+    loop = not loop
+    loopButton.BackgroundColor3 = loop and Color3.fromRGB(255, 0, 0) or Color3.fromRGB(100, 100, 100)
+    loopButton.Text = "Loop: " .. (loop and "ON" or "OFF")
+    task.wait(0.2)
+    clickDebounce = false
+end)
+
+backButton.Activated:Connect(function()
+    if clickDebounce then return end
+    clickDebounce = true
+    if selectedAnim and #selectedAnim.frames > 0 then
+        currentPlayTime = math.max(0, currentPlayTime - 0.5)
+        local found = false
+        for i = 1, #selectedAnim.frames do
+            local currFrame = selectedAnim.frames[i]
+            local nextFrame = selectedAnim.frames[i + 1]
+            if not currFrame or not currFrame.poses then
+                warn("Invalid frame data at index " .. i)
+                task.wait(0.2)
+                clickDebounce = false
+                return
+            end
+            if i == #selectedAnim.frames then
+                applyPoses(currFrame.poses, 1, moveAnimate and currFrame.deltaPosition or nil, moveAnimate and currFrame.rotation or nil)
+                lastFrameIndex = i
+                found = true
+                break
+            elseif nextFrame and currFrame.time <= currentPlayTime and currentPlayTime < nextFrame.time then
+                local lerpAlpha = (currentPlayTime - currFrame.time) / (nextFrame.time - currFrame.time)
+                applyPoses(currFrame.poses, lerpAlpha, moveAnimate and currFrame.deltaPosition or nil, moveAnimate and currFrame.rotation or nil)
+                lastFrameIndex = i
+                found = true
+                break
+            end
+        end
+        if not found and #selectedAnim.frames > 0 then
+            applyPoses(selectedAnim.frames[1].poses, 1, moveAnimate and selectedAnim.frames[1].deltaPosition or nil, moveAnimate and selectedAnim.frames[1].rotation or nil)
+            lastFrameIndex = 1
+            currentPlayTime = 0
+        end
+        updateProgress()
+    end
+    task.wait(0.2)
+    clickDebounce = false
+end)
+
+forwardButton.Activated:Connect(function()
+    if clickDebounce then return end
+    clickDebounce = true
+    if selectedAnim and #selectedAnim.frames > 0 then
+        currentPlayTime = math.min(animationDuration, currentPlayTime + 0.5)
+        local found = false
+        for i = 1, #selectedAnim.frames do
+            local currFrame = selectedAnim.frames[i]
+            local nextFrame = selectedAnim.frames[i + 1]
+            if not currFrame or not currFrame.poses then
+                warn("Invalid frame data at index " .. i)
+                task.wait(0.2)
+                clickDebounce = false
+                return
+            end
+            if i == #selectedAnim.frames then
+                applyPoses(currFrame.poses, 1, moveAnimate and currFrame.deltaPosition or nil, moveAnimate and currFrame.rotation or nil)
+                lastFrameIndex = i
+                found = true
+                break
+            elseif nextFrame and currFrame.time <= currentPlayTime and currentPlayTime < nextFrame.time then
+                local lerpAlpha = (currentPlayTime - currFrame.time) / (nextFrame.time - currFrame.time)
+                applyPoses(currFrame.poses, lerpAlpha, moveAnimate and currFrame.deltaPosition or nil, moveAnimate and currFrame.rotation or nil)
+                lastFrameIndex = i
+                found = true
+                break
+            end
+        end
+        if not found and #selectedAnim.frames > 0 then
+            applyPoses(selectedAnim.frames[#selectedAnim.frames].poses, 1, moveAnimate and selectedAnim.frames[#selectedAnim.frames].deltaPosition or nil, moveAnimate and selectedAnim.frames[#selectedAnim.frames].rotation or nil)
+            lastFrameIndex = #selectedAnim.frames
+            currentPlayTime = animationDuration
+        end
+        updateProgress()
+    end
+    task.wait(0.2)
+    clickDebounce = false
+end)
+
+speedSlider.FocusLost:Connect(function(enterPressed)
+    if clickDebounce then return end
+    clickDebounce = true
+    local input = speedSlider.Text:gsub("^%s*%.", "0.")
+    local newSpeed = tonumber(input)
+    if newSpeed and newSpeed > 0 then
+        playbackSpeed = newSpeed
+        speedLabel.Text = "Speed: " .. tostring(playbackSpeed)
+    else
+        speedSlider.Text = tostring(playbackSpeed)
+        warn("Invalid speed input, reverting to " .. playbackSpeed)
+    end
+    task.wait(0.2)
+    clickDebounce = false
+end)
+
+copyAnimButton.Activated:Connect(function()
+    if clickDebounce then return end
+    clickDebounce = true
+    if selectedAnim and #selectedAnim.frames > 0 then
+        local json = toSingleLineJSON(selectedAnim.frames)
+        if json ~= "" then
+            if setclipboard then
+                pcall(function()
+                    setclipboard(json)
+                end)
+                copyAnimButton.Text = "Copy Successful"
+                task.wait(2)
+                copyAnimButton.Text = "Copy Animation"
+            else
+                importBox.Text = "Error: setclipboard not available"
+                warn("Executor does not support setclipboard")
+            end
+        else
+            importBox.Text = "Error: Failed to generate JSON"
+        end
+    else
+        importBox.Text = "Error: No animation selected"
+    end
+    task.wait(0.2)
+    clickDebounce = false
+end)
+
+saveStateButton.Activated:Connect(function()
+    if clickDebounce then return end
+    clickDebounce = true
+    local state = {}
+    for _, anim in ipairs(animations) do
+        local animData = {name = anim.name, frames = {}}
+        for _, frame in ipairs(anim.frames) do
+            local frameData = {time = frame.time, poses = {}}
+            for name, cf in pairs(frame.poses) do
+                frameData.poses[name] = {cf:components()}
+            end
+            if moveAnimate then
+                frameData.deltaPosition = {frame.deltaPosition.X, frame.deltaPosition.Y, frame.deltaPosition.Z}
+                frameData.rotation = {frame.rotation:components()}
+            end
+            table.insert(animData.frames, frameData)
+        end
+        table.insert(state, animData)
+    end
+    local success, json = pcall(function()
+        return HttpService:JSONEncode(state)
+    end)
+    if success then
+        json = json:gsub("\n", ""):gsub("%s+", " ")
+        if setclipboard then
+            pcall(function()
+                setclipboard(json)
+            end)
+            saveStateButton.Text = "Copy Successful"
+            task.wait(2)
+            saveStateButton.Text = "Save State"
+        else
+            importBox.Text = "Error: setclipboard not available"
+            warn("Executor does not support setclipboard")
+        end
+    else
+        importBox.Text = "Error: Failed to encode state JSON"
+        warn("Failed to encode state JSON: " .. json)
+    end
+    task.wait(0.2)
+    clickDebounce = false
+end)
+
+loadFileButton.Activated:Connect(function()
+    if clickDebounce then return end
+    clickDebounce = true
+    local path = filePathBox.Text
+    if path ~= "" then
+        if loadAnimationsFromFile(path) then
+            for _, child in ipairs(animList:GetChildren()) do
+                if child:IsA("Frame") then
+                    child:Destroy()
+                end
+            end
+            for _, anim in ipairs(animations) do
+                local animButton = createAnimButton(anim)
+                anim.Button = animButton
+            end
+            filePathBox.Text = ""
+            importBox.Text = "Loaded from " .. path
+        else
+            importBox.Text = "Error: Failed to load from " .. path
+        end
+    else
+        importBox.Text = "Error: No file path specified"
+    end
+    task.wait(0.2)
+    clickDebounce = false
+end)
+
+-- Chunked JSON array parser for large single animations
+local function parseArrayInChunks(str)
+    if not (str:sub(1,1) == '[' and str:sub(-1) == ']') then return nil, "Not an array" end
+    local frames = {}
+    local pos = 2
+    while pos < #str do
+        -- skip whitespace and commas
+        pos = str:find("[^%s,]", pos) or #str + 1
+        if pos > #str then break end
+        if str:sub(pos, pos) == ']' then break end
+        if str:sub(pos, pos) ~= '{' then return nil, "Expected {" end
+        local start = pos
+        local count = 1
+        pos = pos + 1
+        while pos <= #str and count > 0 do
+            local char = str:sub(pos, pos)
+            if char == '{' then count = count + 1
+            elseif char == '}' then count = count - 1
+            end
+            pos = pos + 1
+        end
+        if count > 0 then return nil, "Unmatched {" end
+        local objStr = str:sub(start, pos - 1)
+        local success, obj = pcall(HttpService.JSONDecode, HttpService, objStr)
+        if not success then return nil, "Failed to decode object: " .. obj end
+        table.insert(frames, obj)
+    end
+    return frames
+end
+
+importBox.FocusLost:Connect(function(enterPressed)
+    if clickDebounce then return end
+    clickDebounce = true
+    local data = importBox.Text
+    if data == "" then
+        importBox.Text = "Error: No data provided"
+        task.wait(0.2)
+        clickDebounce = false
+        return
+    end
+
+    -- Sanitize input
+    data = data:gsub("[^%w%p%s]", "")  -- Remove invalid characters
+    data = data:gsub("%s+", " ")  -- Normalize spaces
+    data = data:gsub("\n", "")  -- Remove newlines
+
+    -- Validate JSON structure
+    local function isValidJSON(str)
+        local openBrackets = 0
+        local inString = false
+        for i = 1, #str do
+            local char = str:sub(i, i)
+            if char == "\"" and str:sub(i-1, i-1) ~= "\\" then
+                inString = not inString
+            elseif not inString then
+                if char == "[" then
+                    openBrackets = openBrackets + 1
+                elseif char == "]" then
+                    openBrackets = openBrackets - 1
+                end
+            end
+            if openBrackets < 0 then
+                return false, "Extra closing bracket at position " .. i
+            end
+        end
+        if openBrackets > 0 then
+            return false, "Missing " .. openBrackets .. " closing bracket(s)"
+        end
+        return true
+    end
+
+    local valid, errMsg = isValidJSON(data)
+    if not valid then
+        warn("Invalid JSON structure: " .. errMsg)
+        importBox.Text = "Error: " .. errMsg
+        task.wait(0.2)
+        clickDebounce = false
+        return
+    end
+
+    if debugMode then
+        print("Raw JSON input: " .. data)
+    end
+
+    local success, importedData = pcall(function()
+        return HttpService:JSONDecode(data)
+    end)
+    if success and type(importedData) == "table" then
+        local valid = true
+        if importedData[1] and importedData[1].name then
+            -- Importing a state (array of animations)
+            animations = {}
+            animCount = 0
+            for _, animData in ipairs(importedData) do
+                local frames = {}
+                for _, frame in ipairs(animData.frames or {}) do
+                    if not frame.time or not frame.poses or type(frame.time) ~= "number" or type(frame.poses) ~= "table" then
+                        warn("Invalid frame: missing or invalid time/poses")
+                        valid = false
+                        break
+                    end
+                    local poses = {}
+                    for name, components in pairs(frame.poses) do
+                        if type(components) == "table" and #components == 12 then
+                            local success, cf = pcall(CFrame.new, table.unpack(components))
+                            if success then
+                                poses[name] = cf
+                            else
+                                warn("Invalid CFrame components for " .. name)
+                                valid = false
+                                break
+                            end
+                        else
+                            warn("Invalid components for " .. name .. ": expected 12 numbers")
+                            valid = false
+                            break
+                        end
+                    end
+                    if not valid then break end
+                    local frameEntry = {time = frame.time, poses = poses}
+                    if moveAnimate then
+                        frameEntry.deltaPosition = Vector3.new(table.unpack(frame.deltaPosition or {0, 0, 0}))
+                        frameEntry.rotation = CFrame.new(table.unpack(frame.rotation or {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1}))
+                    end
+                    table.insert(frames, frameEntry)
+                end
+                if valid then
+                    local newAnim = {name = animData.name or "Anim " .. (animCount + 1), frames = frames}
+                    table.insert(animations, newAnim)
+                    animCount = animCount + 1
+                    local animButton = createAnimButton(newAnim)
+                    newAnim.Button = animButton
+                    if not selectedAnim then
+                        selectAnimation(newAnim, animButton)
+                    end
+                else
+                    warn("Invalid frame data in imported animation")
+                    importBox.Text = "Error: Invalid frame data"
+                end
+            end
+            if valid then
+                for _, child in ipairs(animList:GetChildren()) do
+                    if child:IsA("Frame") then
+                        child:Destroy()
+                    end
+                end
+                for _, anim in ipairs(animations) do
+                    local animButton = createAnimButton(anim)
+                    anim.Button = animButton
+                end
+                importBox.Text = ""
+                saveAnimationsToFile()
+            end
+        else
+            -- Importing a single animation
+            local importedFrames
+            local err
+            if #data > 10000 then  -- Arbitrary threshold for large JSON
+                importedFrames, err = parseArrayInChunks(data)
+                if not importedFrames then
+                    warn(err)
+                    importBox.Text = "Error: " .. err
+                    task.wait(0.2)
+                    clickDebounce = false
+                    return
+                end
+            else
+                importedFrames = importedData
+            end
+            local frames = {}
+            for _, frame in ipairs(importedFrames) do
+                if not frame.time or not frame.poses or type(frame.time) ~= "number" or type(frame.poses) ~= "table" then
+                    warn("Invalid frame: missing or invalid time/poses")
+                    valid = false
+                    break
+                end
+                local poses = {}
+                for name, components in pairs(frame.poses) do
+                    if type(components) == "table" and #components == 12 then
+                        local success, cf = pcall(CFrame.new, table.unpack(components))
+                        if success then
+                            poses[name] = cf
+                        else
+                            warn("Invalid CFrame components for " .. name)
+                            valid = false
+                            break
+                        end
+                    else
+                        warn("Invalid components for " .. name .. ": expected 12 numbers")
+                        valid = false
+                        break
+                    end
+                end
+                if not valid then break end
+                local frameEntry = {time = frame.time, poses = poses}
+                if moveAnimate then
+                    frameEntry.deltaPosition = Vector3.new(table.unpack(frame.deltaPosition or {0, 0, 0}))
+                    frameEntry.rotation = CFrame.new(table.unpack(frame.rotation or {0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1}))
+                end
+                table.insert(frames, frameEntry)
+            end
+            if valid then
+                local newAnim = {name = "Anim " .. (animCount + 1), frames = frames}
+                table.insert(animations, newAnim)
+                animCount = animCount + 1
+                local animButton = createAnimButton(newAnim)
+                newAnim.Button = animButton
+                selectAnimation(newAnim, animButton)
+                importBox.Text = ""
+                saveAnimationsToFile()
+            else
+                warn("Invalid frame data in imported JSON")
+                importBox.Text = "Error: Invalid frame data"
+            end
+        end
+    else
+        warn("Failed to decode JSON: " .. (importedData or "Unknown error"))
+        importBox.Text = "Error: Invalid JSON - Check for missing brackets or invalid characters"
+    end
+    task.wait(0.2)
+    clickDebounce = false
+end)
+
+-- Handle character respawn
+player.CharacterAdded:Connect(function(newChar)
+    character = newChar
+    humanoid = newChar:WaitForChild("Humanoid")
+    motors = getMotors(newChar)
+    if not isR6(newChar) then
+        warn("Respawned character is not R6, animations may not work")
+    end
+    local rootPart = newChar:FindFirstChild("HumanoidRootPart")
+    if rootPart then
+        rootPart.Anchored = false
+    end
+    enableAnimator()
+end)
+
+-- Handle other players' character added/removed for mirroring
+game.Players.PlayerAdded:Connect(function()
+    populatePlayers()
+end)
+game.Players.PlayerRemoving:Connect(function(p)
+    populatePlayers()
+    if selectedTarget and selectedTarget.Player == p then
+        if mirrorConnection then
+            mirrorConnection:Disconnect()
+            mirrorConnection = nil
+            mirrorButton.Text = "Mirror"
+            task.wait(0.1)
+            enableAnimator()
+        end
+        selectedTarget = nil
+    end
+end)
+
+-- Cleanup on script end
+game:BindToClose(function()
+    enableAnimator()
+    saveAnimationsToFile()
+end)
+
+-- Populate existing animations if any
+for _, anim in ipairs(animations) do
+    local animButton = createAnimButton(anim)
+    anim.Button = animButton
+end
+
+-- Debug file system
+listFilesInDirectory("Workspace")
+listFilesInDirectory("workspace")
+listFilesInDirectory("Delta/Delta/Workspace")
+listFilesInDirectory("Delta/Delta/workspace")
+listFilesInDirectory("Delta/Workspace")
+listFilesInDirectory("Delta/workspace")
+
+-- Load animations
+loadAnimationsFromFile()
+
+-- Perform startup checks
+local function performStartupChecks()
+    print("Performing startup checks...")
+    if character and humanoid and isR6(character) then
+        print("Character check: Passed (R6 rig detected)")
+    else
+        warn("Character check: Failed")
+    end
+    if next(motors) then
+        print("Motors check: Passed (" .. table.concat(table.keys(motors), ", ") .. ")")
+    else
+        warn("Motors check: Failed (No motors found)")
+    end
+    if playerGui then
+        print("GUI check: Passed (PlayerGui found)")
+    else
+        warn("GUI check: Failed")
+    end
+    if writefile and readfile and isfile then
+        print("File I/O check: Passed (Executor supports file operations)")
+    else
+        warn("File I/O check: Partial or Failed (Some file functions missing)")
+    end
+    print("Startup checks complete.")
+end
+
+performStartupChecks()
